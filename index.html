@@ -12,7 +12,7 @@
     --bg:#0d0d0f; --surface:#16161a; --surface2:#1e1e24;
     --border:#2a2a35; --gold:#c8a96e; --gold-light:#e8c98e;
     --cream:#f0e8d8; --text:#d8d0c8; --text-dim:#8a8578;
-    --tile-bg:#1a1a22; --tile-border:#30304a; --recon:#7a9ec4;
+    --tile-bg:#1a1a22; --tile-border:#30304a; --recon:#7a9ec4; --digits:#8ec49a;
   }
   * { margin:0; padding:0; box-sizing:border-box; }
   body {
@@ -57,6 +57,8 @@
   }
   button.recon-btn { border-color: var(--recon); color: var(--recon); }
   button.recon-btn:hover { background: rgba(122,158,196,0.1); }
+  button.digits-btn { border-color: var(--digits); color: var(--digits); }
+  button.digits-btn:hover { background: rgba(142,196,154,0.1); }
   button:hover { background: rgba(200,169,110,0.1); }
   button:disabled { opacity: 0.4; cursor: default; }
 
@@ -85,6 +87,11 @@
   .card.recon .tile.in-path { border-color: var(--recon); color: #cfe0f0; }
   .card.recon .tile .order-badge { color: var(--recon); }
   .card.recon .word-display { color: #cfe0f0; }
+  .card.digits .card-badge { background: var(--digits); }
+  .card.digits .path-svg path { stroke: var(--digits); filter: drop-shadow(0 0 4px rgba(142,196,154,.6)); }
+  .card.digits .tile.in-path { border-color: var(--digits); color: #d9f0dd; }
+  .card.digits .tile .order-badge { color: var(--digits); }
+  .card.digits .word-display { color: #d9f0dd; }
   .card-sub {
     font-size: 0.62rem; letter-spacing: 0.1em; color: var(--text-dim);
     text-transform: uppercase; margin-top: 2px;
@@ -126,7 +133,7 @@
     color: var(--gold-light); letter-spacing: 0.1em; text-transform: uppercase;
   }
 
-  .card.recon .grid-wrap.clickable { cursor: pointer; }
+  .grid-wrap.clickable { cursor: pointer; }
   .word-list {
     display: flex; flex-wrap: wrap; gap: 6px; justify-content: center;
     max-width: 380px; padding-top: 4px;
@@ -141,6 +148,20 @@
   .word-chip.selected {
     background: rgba(122,158,196,0.18); border-color: var(--recon); color: #cfe0f0;
     font-weight: 500;
+  }
+  .digit-list {
+    display: flex; flex-wrap: wrap; gap: 6px; justify-content: center;
+    max-width: 380px;
+  }
+  .digit-chip {
+    font-family: 'DM Mono', monospace; font-size: 0.66rem; letter-spacing: 0.04em;
+    text-transform: uppercase; color: var(--digits);
+    background: rgba(142,196,154,0.1); border: 1px solid var(--digits);
+    border-radius: 6px; padding: 4px 8px; cursor: pointer; transition: all .15s;
+  }
+  .digit-chip:hover { background: rgba(142,196,154,0.22); }
+  .digit-chip.selected {
+    background: rgba(142,196,154,0.3); font-weight: 500;
   }
 
   table.len-table {
@@ -188,6 +209,11 @@
     <button id="btnReconstruct" class="recon-btn" disabled>Lancer</button>
   </div>
   <div id="reconStatus">Préparation…</div>
+
+  <div id="digitsControls" style="margin-top:18px;">
+    <button id="btnDigits" class="digits-btn" disabled>Maximiser les chiffres (0 à 9)</button>
+  </div>
+  <div id="digitsStatus"></div>
 </header>
 
 <div id="feed"></div>
@@ -402,6 +428,122 @@ function startEngine(dictionary, wordsByLen) {
       return { counts, maxLen };
     }
 
+    // ── Mode "Maximiser les chiffres" ──────────────────────────
+    const DIGIT_WORDS = ['ZERO','UN','DEUX','TROIS','QUATRE','CINQ','SIX','SEPT','HUIT','NEUF'];
+
+    // Cherche si "word" existe comme chemin de cases adjacentes sur le plateau
+    // (indépendant du trie : autorise aussi "UN", qui ne compte pas comme mot de 3+ lettres).
+    function pathExists(board, word) {
+      function dfs(idx, path, wi) {
+        if (wi === word.length) return path.slice();
+        for (const nb of ADJ[idx]) {
+          if (path.includes(nb)) continue;
+          if (board[nb] !== word[wi]) continue;
+          path.push(nb);
+          const r = dfs(nb, path, wi+1);
+          if (r) return r;
+          path.pop();
+        }
+        return null;
+      }
+      for (let i = 0; i < 16; i++) {
+        if (board[i] !== word[0]) continue;
+        const p = dfs(i, [i], 1);
+        if (p) return p;
+      }
+      return null;
+    }
+
+    // Place un mot sur le plateau en réutilisant les cases déjà assignées si les lettres
+    // correspondent, sinon en assignant de nouvelles cases. Abandonne si le budget de pas
+    // est épuisé. Ne fait PAS marche arrière sur les mots déjà placés (placement glouton).
+    function extendDigitPath(board, assigned, path, word, wi, budget, newly) {
+      if (wi === word.length) return true;
+      const last = path[path.length-1];
+      const neighbors = shuffle(ADJ[last].slice());
+      for (const nb of neighbors) {
+        if (path.includes(nb)) continue;
+        budget.steps--;
+        if (budget.steps <= 0) return false;
+        const ch = word[wi];
+        if (assigned[nb]) {
+          if (board[nb] !== ch) continue;
+          path.push(nb);
+          if (extendDigitPath(board, assigned, path, word, wi+1, budget, newly)) return true;
+          path.pop();
+        } else {
+          board[nb] = ch; assigned[nb] = true; newly.push(nb);
+          path.push(nb);
+          if (extendDigitPath(board, assigned, path, word, wi+1, budget, newly)) return true;
+          path.pop();
+          newly.pop();
+          assigned[nb] = false; board[nb] = null;
+        }
+      }
+      return false;
+    }
+
+    function tryPlaceDigitWord(board, assigned, word, budget) {
+      const starts = shuffle([...Array(16).keys()]);
+      for (const start of starts) {
+        if (budget.steps <= 0) return false;
+        const ch0 = word[0];
+        const wasAssigned = assigned[start];
+        if (wasAssigned && board[start] !== ch0) continue;
+        const newly = [];
+        if (!wasAssigned) { board[start] = ch0; assigned[start] = true; newly.push(start); }
+        const path = [start];
+        budget.steps--;
+        if (extendDigitPath(board, assigned, path, word, 1, budget, newly)) return true;
+        for (const cell of newly) { assigned[cell] = false; board[cell] = null; }
+      }
+      return false;
+    }
+
+    // Construit une grille candidate en essayant de placer, dans un ordre aléatoire,
+    // le plus de mots-chiffres possible (placement glouton), puis remplit le reste au hasard.
+    function buildDigitsCandidate() {
+      const board = new Array(16).fill(null);
+      const assigned = new Array(16).fill(false);
+      const order = shuffle(DIGIT_WORDS.slice());
+      const budget = { steps: 1500 };
+      for (const word of order) {
+        if (budget.steps <= 0) break;
+        tryPlaceDigitWord(board, assigned, word, budget);
+      }
+      const filler = randomBoard();
+      for (let i = 0; i < 16; i++) if (!assigned[i]) board[i] = filler[i];
+      return board;
+    }
+
+    let digitsRunning = false;
+    let digitsTested = 0;
+    let digitsBest = -1;
+    const DIGITS_MAX_WORDS = 19;
+
+    function digitsLoop() {
+      if (!digitsRunning) return;
+      const BATCH = 15;
+      for (let k = 0; k < BATCH; k++) {
+        const board = buildDigitsCandidate();
+        digitsTested++;
+        const { words, overflow } = analyzeBoardCapped(board, trie, DIGITS_MAX_WORDS);
+        if (overflow) continue; // 20e mot trouvé : on abandonne cette grille
+        const digits = [];
+        for (const w of DIGIT_WORDS) {
+          const p = pathExists(board, w);
+          if (p) digits.push({ word: w, path: p });
+        }
+        if (digits.length > digitsBest) {
+          digitsBest = digits.length;
+          const { counts, maxLen } = lengthCounts(words);
+          self.postMessage({ type:'digitsGrid', board, counts, total: words.length, maxLen, words, digits, digitCount: digits.length });
+        }
+      }
+      self.postMessage({ type:'digitsProgress', tested: digitsTested, best: digitsBest });
+      setTimeout(digitsLoop, 0);
+    }
+
     let reconRunning = false;
     let reconTested = 0;
     let reconFound = 0;
@@ -451,6 +593,16 @@ function startEngine(dictionary, wordsByLen) {
       } else if (e.data.type === 'reconResume') {
         reconRunning = true;
         reconLoop();
+      } else if (e.data.type === 'digits') {
+        digitsBest = -1;
+        digitsTested = 0;
+        digitsRunning = true;
+        digitsLoop();
+      } else if (e.data.type === 'digitsPause') {
+        digitsRunning = false;
+      } else if (e.data.type === 'digitsResume') {
+        digitsRunning = true;
+        digitsLoop();
       }
     };
   `;
@@ -460,6 +612,8 @@ function startEngine(dictionary, wordsByLen) {
   const btnReconstruct = document.getElementById('btnReconstruct');
   const reconStatusEl = document.getElementById('reconStatus');
   const lenSelect = document.getElementById('lenSelect');
+  const btnDigits = document.getElementById('btnDigits');
+  const digitsStatusEl = document.getElementById('digitsStatus');
 
   const availableLens = Object.keys(wordsByLen).map(Number).filter(l => wordsByLen[l].length > 0).sort((a,b)=>a-b);
   availableLens.forEach(l => {
@@ -475,11 +629,18 @@ function startEngine(dictionary, wordsByLen) {
   let reconActive = false;
   let reconRunning = false;
 
+  let digitsActive = false;
+  let digitsRunning = false;
+  let digitsTested = 0;
+  let digitsBest = -1;
+
   worker.onmessage = (e) => {
     if (e.data.type === 'ready') {
       reconStatusEl.textContent = 'Prêt — choisissez une longueur et lancez la recherche.';
       lenSelect.disabled = false;
       btnReconstruct.disabled = false;
+      btnDigits.disabled = false;
+      digitsStatusEl.textContent = 'Prêt à chercher.';
     } else if (e.data.type === 'reconGrid') {
       reconCount++;
       addCard(e.data, 'recon');
@@ -489,12 +650,25 @@ function startEngine(dictionary, wordsByLen) {
       updateReconStatus();
     } else if (e.data.type === 'reconError') {
       reconStatusEl.textContent = e.data.message;
+    } else if (e.data.type === 'digitsGrid') {
+      digitsBest = e.data.digitCount;
+      addCard(e.data, 'digits');
+      updateDigitsStatus();
+    } else if (e.data.type === 'digitsProgress') {
+      digitsTested = e.data.tested;
+      updateDigitsStatus();
     }
   };
 
   function updateReconStatus() {
     const txt = `<strong>${reconCount}</strong> grille${reconCount>1?'s':''} affichée${reconCount>1?'s':''} (≤ 21 mots) · ${reconTested.toLocaleString('fr-FR')} testée${reconTested>1?'s':''}`;
     reconStatusEl.innerHTML = txt;
+  }
+
+  function updateDigitsStatus() {
+    let txt = `${digitsTested.toLocaleString('fr-FR')} grille${digitsTested>1?'s':''} testée${digitsTested>1?'s':''}`;
+    if (digitsBest >= 0) txt += ` · meilleur score : <strong>${digitsBest}</strong> / 10 chiffres`;
+    digitsStatusEl.innerHTML = txt;
   }
 
   function resetSearch() {
@@ -505,6 +679,30 @@ function startEngine(dictionary, wordsByLen) {
     btnReconstruct.textContent = 'Lancer';
     reconStatusEl.textContent = 'Prêt — choisissez une longueur et lancez la recherche.';
   }
+
+  function resetDigitsSearch() {
+    digitsActive = false;
+    digitsRunning = false;
+    digitsTested = 0;
+    digitsBest = -1;
+    btnDigits.textContent = 'Maximiser les chiffres (0 à 9)';
+    digitsStatusEl.textContent = 'Prêt à chercher.';
+  }
+
+  btnDigits.addEventListener('click', () => {
+    if (!digitsActive) {
+      digitsActive = true;
+      digitsRunning = true;
+      digitsTested = 0;
+      digitsBest = -1;
+      worker.postMessage({ type: 'digits' });
+      btnDigits.textContent = 'Pause';
+    } else {
+      digitsRunning = !digitsRunning;
+      worker.postMessage({ type: digitsRunning ? 'digitsResume' : 'digitsPause' });
+      btnDigits.textContent = digitsRunning ? 'Pause' : 'Reprendre';
+    }
+  });
 
   lenSelect.addEventListener('change', () => {
     if (reconActive) {
@@ -533,17 +731,23 @@ function startEngine(dictionary, wordsByLen) {
 
   function addCard(data, kind) {
     const card = document.createElement('div');
-    card.className = 'card' + (kind === 'recon' ? ' recon' : '');
+    card.className = 'card' + (kind === 'recon' ? ' recon' : '') + (kind === 'digits' ? ' digits' : '');
 
     const head = document.createElement('div');
     head.className = 'card-head';
     const badge = document.createElement('div');
     badge.className = 'card-badge';
-    badge.textContent = `Rétroconstruction — mot de ${data.targetLen} lettres`;
+    if (kind === 'digits') badge.textContent = `${data.digitCount} chiffre${data.digitCount>1?'s':''} sur 10`;
+    else badge.textContent = `Rétroconstruction — mot de ${data.targetLen} lettres`;
     head.appendChild(badge);
     const sub = document.createElement('div');
     sub.className = 'card-sub';
-    sub.textContent = `${data.total} mots trouvables · plus long mot : ${data.maxLen} lettres`;
+    if (kind === 'digits') {
+      const found = data.digits.map(d => d.word).join(', ');
+      sub.textContent = `${data.total} mots trouvables (< 20) · chiffres : ${found}`;
+    } else {
+      sub.textContent = `${data.total} mots trouvables · plus long mot : ${data.maxLen} lettres`;
+    }
     head.appendChild(sub);
     card.appendChild(head);
 
@@ -604,17 +808,40 @@ function startEngine(dictionary, wordsByLen) {
       } else {
         svgPath.setAttribute('d', '');
       }
-      if (word) wordEl.textContent = word;
+      wordEl.textContent = word || '';
+      wordEl.style.display = word ? '' : 'none';
     }
 
-    renderPath(data.path, data.longest);
+    const defaultPath = kind === 'digits' ? null : data.path;
+    const defaultWord = kind === 'digits' ? null : data.longest;
+    renderPath(defaultPath, defaultWord);
 
     card.appendChild(gridWrap);
-    if (data.longest) card.appendChild(wordEl);
+    card.appendChild(wordEl);
 
-    if (kind === 'recon' && data.words && data.words.length) {
+    let digitChipsEl = null;
+    if (kind === 'digits' && data.digits && data.digits.length) {
+      digitChipsEl = document.createElement('div');
+      digitChipsEl.className = 'digit-list';
+      data.digits.forEach(d => {
+        const chip = document.createElement('span');
+        chip.className = 'digit-chip';
+        chip.textContent = d.word;
+        chip.addEventListener('click', () => {
+          [...digitChipsEl.querySelectorAll('.digit-chip.selected')].forEach(c => c.classList.remove('selected'));
+          if (wordsListEl) wordsListEl.querySelectorAll('.word-chip.selected').forEach(c => c.classList.remove('selected'));
+          chip.classList.add('selected');
+          renderPath(d.path, d.word);
+        });
+        digitChipsEl.appendChild(chip);
+      });
+      card.appendChild(digitChipsEl);
+    }
+
+    let wordsListEl = null;
+    if ((kind === 'recon' || kind === 'digits') && data.words && data.words.length) {
       gridWrap.classList.add('clickable');
-      const wordsListEl = document.createElement('div');
+      wordsListEl = document.createElement('div');
       wordsListEl.className = 'word-list';
       wordsListEl.style.display = 'none';
       const sortedWords = data.words.slice().sort((a,b) => b.length - a.length || a.localeCompare(b));
@@ -626,6 +853,7 @@ function startEngine(dictionary, wordsByLen) {
           const p = findPathClient(data.board, w);
           if (!p) return;
           wordsListEl.querySelectorAll('.word-chip.selected').forEach(c => c.classList.remove('selected'));
+          if (digitChipsEl) digitChipsEl.querySelectorAll('.digit-chip.selected').forEach(c => c.classList.remove('selected'));
           chip.classList.add('selected');
           renderPath(p, w);
         });
@@ -638,7 +866,8 @@ function startEngine(dictionary, wordsByLen) {
         if (showing) {
           wordsListEl.style.display = 'none';
           wordsListEl.querySelectorAll('.word-chip.selected').forEach(c => c.classList.remove('selected'));
-          renderPath(data.path, data.longest);
+          if (digitChipsEl) digitChipsEl.querySelectorAll('.digit-chip.selected').forEach(c => c.classList.remove('selected'));
+          renderPath(defaultPath, defaultWord);
         } else {
           wordsListEl.style.display = 'flex';
         }
