@@ -84,6 +84,20 @@
     border-radius: 8px; display: flex; align-items: center; justify-content: center;
     font-family: 'Playfair Display', serif; font-size: 1.6rem; font-weight: 700;
     color: var(--cream);
+    position: relative;
+  }
+  .tile.in-path {
+    background: #201c30; border-color: var(--gold); color: var(--gold-light);
+    box-shadow: 0 0 0 1px var(--gold);
+  }
+  .tile .order-badge {
+    position: absolute; top: 2px; left: 3px;
+    font-family: 'DM Mono', monospace; font-size: 0.55rem; font-weight: 500;
+    color: var(--gold);
+  }
+  .word-display {
+    font-family: 'Playfair Display', serif; font-size: 1rem;
+    color: var(--gold-light); letter-spacing: 0.1em; text-transform: uppercase;
   }
 
   table.len-table {
@@ -231,6 +245,37 @@ function startEngine(dictionary) {
       return { words: [...found] };
     }
 
+    // Trouve un chemin (suite d'indices de cases adjacentes) formant le mot "word" sur "board".
+    function findPath(board, word) {
+      const N = 4;
+      const adj = [];
+      for (let i = 0; i < 16; i++) {
+        adj[i] = [];
+        const r = Math.floor(i / N), c = i % N;
+        for (let j = 0; j < 16; j++) {
+          const dr = Math.abs(r - Math.floor(j/N)), dc = Math.abs(c - j%N);
+          if (dr<=1 && dc<=1 && i!==j) adj[i].push(j);
+        }
+      }
+      function dfs(idx, path, wi) {
+        if (wi === word.length) return true;
+        for (const nb of adj[idx]) {
+          if (path.includes(nb)) continue;
+          if (board[nb] !== word[wi]) continue;
+          path.push(nb);
+          if (dfs(nb, path, wi+1)) return true;
+          path.pop();
+        }
+        return false;
+      }
+      for (let i = 0; i < 16; i++) {
+        if (board[i] !== word[0]) continue;
+        const path = [i];
+        if (dfs(i, path, 1)) return path;
+      }
+      return null;
+    }
+
     const FRENCH_DICE_W = [
       'AELMNU','AEHLOS','AINOTW','ABORTU','EILTUZ','AEIPSV','AEINRT',
       'EIORTY','ADEILS','ACEINO','ACELRS','EJLRST','EIPRSU','AEKOQS',
@@ -269,11 +314,15 @@ function startEngine(dictionary) {
           // Phase 1 : première grille avec au moins 100 mots
           if (words.length >= 100) {
             record = maxLen;
-            self.postMessage({ type:'grid', board, counts, total: words.length, maxLen, tested, first:true });
+            const longest = words.find(w => w.length === maxLen);
+            const path = findPath(board, longest);
+            self.postMessage({ type:'grid', board, counts, total: words.length, maxLen, tested, first:true, longest, path });
           }
         } else if (maxLen > record) {
           record = maxLen;
-          self.postMessage({ type:'grid', board, counts, total: words.length, maxLen, tested, first:false });
+          const longest = words.find(w => w.length === maxLen);
+          const path = findPath(board, longest);
+          self.postMessage({ type:'grid', board, counts, total: words.length, maxLen, tested, first:false, longest, path });
         }
       }
       self.postMessage({ type:'progress', tested });
@@ -347,13 +396,28 @@ function startEngine(dictionary) {
 
     const grid = document.createElement('div');
     grid.className = 'grid';
-    data.board.forEach(letter => {
+    const orderOf = new Map();
+    if (data.path) data.path.forEach((idx, i) => orderOf.set(idx, i+1));
+    data.board.forEach((letter, i) => {
       const t = document.createElement('div');
-      t.className = 'tile';
+      t.className = 'tile' + (orderOf.has(i) ? ' in-path' : '');
       t.textContent = letter === 'Q' ? 'Qu' : letter;
+      if (orderOf.has(i)) {
+        const badge = document.createElement('span');
+        badge.className = 'order-badge';
+        badge.textContent = orderOf.get(i);
+        t.appendChild(badge);
+      }
       grid.appendChild(t);
     });
     card.appendChild(grid);
+
+    if (data.longest) {
+      const wordEl = document.createElement('div');
+      wordEl.className = 'word-display';
+      wordEl.textContent = data.longest;
+      card.appendChild(wordEl);
+    }
 
     const table = document.createElement('table');
     table.className = 'len-table';
