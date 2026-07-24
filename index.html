@@ -74,9 +74,19 @@
     text-transform: uppercase; margin-top: 2px;
   }
 
+  .grid-wrap { position: relative; width: 278px; height: 278px; }
   .grid {
     display: grid; grid-template-columns: repeat(4, 62px); grid-template-rows: repeat(4, 62px);
     gap: 6px;
+  }
+  .path-svg {
+    position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+    pointer-events: none; z-index: 2;
+  }
+  .path-svg path {
+    fill: none; stroke: var(--gold); stroke-width: 4;
+    stroke-linecap: round; stroke-linejoin: round; opacity: .75;
+    filter: drop-shadow(0 0 4px rgba(200,169,110,.6));
   }
   .tile {
     width: 62px; height: 62px;
@@ -394,6 +404,9 @@ function startEngine(dictionary) {
     head.appendChild(sub);
     card.appendChild(head);
 
+    const gridWrap = document.createElement('div');
+    gridWrap.className = 'grid-wrap';
+
     const grid = document.createElement('div');
     grid.className = 'grid';
     const orderOf = new Map();
@@ -401,7 +414,7 @@ function startEngine(dictionary) {
     data.board.forEach((letter, i) => {
       const t = document.createElement('div');
       t.className = 'tile' + (orderOf.has(i) ? ' in-path' : '');
-      t.textContent = letter === 'Q' ? 'Qu' : letter;
+      t.textContent = letter;
       if (orderOf.has(i)) {
         const badge = document.createElement('span');
         badge.className = 'order-badge';
@@ -410,7 +423,26 @@ function startEngine(dictionary) {
       }
       grid.appendChild(t);
     });
-    card.appendChild(grid);
+    gridWrap.appendChild(grid);
+
+    if (data.path && data.path.length >= 2) {
+      const TILE = 62, GAP = 6;
+      const centerOf = idx => {
+        const r = Math.floor(idx / 4), c = idx % 4;
+        return { x: c*(TILE+GAP) + TILE/2, y: r*(TILE+GAP) + TILE/2 };
+      };
+      const d = data.path.map((idx, k) => {
+        const p = centerOf(idx);
+        return `${k ? 'L' : 'M'}${p.x.toFixed(1)},${p.y.toFixed(1)}`;
+      }).join(' ');
+      const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+      svg.setAttribute('class', 'path-svg');
+      svg.setAttribute('viewBox', `0 0 278 278`);
+      svg.innerHTML = `<path d="${d}"/>`;
+      gridWrap.appendChild(svg);
+    }
+
+    card.appendChild(gridWrap);
 
     if (data.longest) {
       const wordEl = document.createElement('div');
