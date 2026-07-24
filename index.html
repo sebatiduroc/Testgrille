@@ -404,9 +404,10 @@ function startEngine(dictionary, wordsByLen) {
     }
 
     let reconRunning = false;
-    let reconBestTotal = null;
     let reconTested = 0;
+    let reconFound = 0;
     let reconTargetLen = null;
+    const MAX_WORDS = 21;
 
     function reconLoop() {
       if (!reconRunning) return;
@@ -427,11 +428,9 @@ function startEngine(dictionary, wordsByLen) {
         reconTested++;
         const { counts, maxLen } = lengthCounts(words);
         if (maxLen > reconTargetLen) continue; // un mot plus long que voulu existe : on rejette cette grille
-        const isFirst = reconBestTotal === null;
-        if (isFirst || words.length < reconBestTotal) {
-          reconBestTotal = words.length;
-          self.postMessage({ type:'reconGrid', board, counts, total: words.length, maxLen, longest: word, path, first: isFirst, words, targetLen: reconTargetLen });
-        }
+        if (words.length > MAX_WORDS) continue; // trop de mots : on rejette cette grille
+        reconFound++;
+        self.postMessage({ type:'reconGrid', board, counts, total: words.length, maxLen, longest: word, path, words, targetLen: reconTargetLen });
       }
       self.postMessage({ type:'reconProgress', tested: reconTested });
       setTimeout(reconLoop, 0);
@@ -444,7 +443,7 @@ function startEngine(dictionary, wordsByLen) {
         self.postMessage({ type:'ready' });
       } else if (e.data.type === 'reconstruct') {
         reconTargetLen = e.data.targetLen;
-        reconBestTotal = null;
+        reconFound = 0;
         reconTested = 0;
         reconRunning = true;
         reconLoop();
@@ -476,7 +475,6 @@ function startEngine(dictionary, wordsByLen) {
   let reconTested = 0;
   let reconActive = false;
   let reconRunning = false;
-  let reconBestTotal = null;
 
   worker.onmessage = (e) => {
     if (e.data.type === 'ready') {
@@ -485,7 +483,6 @@ function startEngine(dictionary, wordsByLen) {
       btnReconstruct.disabled = false;
     } else if (e.data.type === 'reconGrid') {
       reconCount++;
-      reconBestTotal = e.data.total;
       addCard(e.data, 'recon');
       updateReconStatus();
     } else if (e.data.type === 'reconProgress') {
@@ -497,8 +494,7 @@ function startEngine(dictionary, wordsByLen) {
   };
 
   function updateReconStatus() {
-    let txt = `<strong>${reconCount}</strong> grille${reconCount>1?'s':''} affichée${reconCount>1?'s':''} · ${reconTested.toLocaleString('fr-FR')} testée${reconTested>1?'s':''}`;
-    if (reconBestTotal !== null) txt += ` · meilleure : <strong>${reconBestTotal}</strong> mots`;
+    const txt = `<strong>${reconCount}</strong> grille${reconCount>1?'s':''} affichée${reconCount>1?'s':''} (≤ 21 mots) · ${reconTested.toLocaleString('fr-FR')} testée${reconTested>1?'s':''}`;
     reconStatusEl.innerHTML = txt;
   }
 
@@ -507,7 +503,6 @@ function startEngine(dictionary, wordsByLen) {
     reconRunning = false;
     reconCount = 0;
     reconTested = 0;
-    reconBestTotal = null;
     btnReconstruct.textContent = 'Lancer';
     reconStatusEl.textContent = 'Prêt — choisissez une longueur et lancez la recherche.';
   }
@@ -526,7 +521,6 @@ function startEngine(dictionary, wordsByLen) {
       reconRunning = true;
       reconCount = 0;
       reconTested = 0;
-      reconBestTotal = null;
       lenSelect.disabled = true;
       worker.postMessage({ type: 'reconstruct', targetLen });
       btnReconstruct.textContent = 'Pause';
