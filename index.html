@@ -295,37 +295,6 @@ function startEngine(dictionary, wordsByLen) {
       return root;
     }
 
-    function analyzeBoard(board, trie) {
-      const N = 4;
-      const adj = [];
-      for (let i = 0; i < 16; i++) {
-        adj[i] = [];
-        const r = Math.floor(i / N), c = i % N;
-        for (let j = 0; j < 16; j++) {
-          const dr = Math.abs(r - Math.floor(j/N)), dc = Math.abs(c - j%N);
-          if (dr<=1 && dc<=1 && i!==j) adj[i].push(j);
-        }
-      }
-      const found = new Set();
-      function dfs(idx, path, node, word) {
-        if (word.length >= 3 && node['$']) found.add(word);
-        for (const nb of adj[idx]) {
-          if (path.includes(nb)) continue;
-          const ch = board[nb];
-          if (!node[ch]) continue;
-          path.push(nb);
-          dfs(nb, path, node[ch], word + ch);
-          path.pop();
-        }
-      }
-      for (let i = 0; i < 16; i++) {
-        const ch = board[i];
-        if (!trie[ch]) continue;
-        dfs(i, [i], trie[ch], ch);
-      }
-      return { words: [...found] };
-    }
-
     function buildAdjacency() {
       const N = 4;
       const adj = [];
@@ -340,6 +309,36 @@ function startEngine(dictionary, wordsByLen) {
       return adj;
     }
     const ADJ = buildAdjacency();
+
+    // Analyse la grille et s'arrête dès qu'un (cap+1)-ième mot est trouvé :
+    // inutile de compter tous les mots d'une grille qu'on va de toute façon écarter.
+    function analyzeBoardCapped(board, trie, cap) {
+      const found = new Set();
+      let overflow = false;
+      function dfs(idx, path, node, word) {
+        if (overflow) return;
+        if (word.length >= 3 && node['$']) {
+          found.add(word);
+          if (found.size > cap) { overflow = true; return; }
+        }
+        for (const nb of ADJ[idx]) {
+          if (overflow) return;
+          if (path.includes(nb)) continue;
+          const ch = board[nb];
+          if (!node[ch]) continue;
+          path.push(nb);
+          dfs(nb, path, node[ch], word + ch);
+          path.pop();
+        }
+      }
+      for (let i = 0; i < 16; i++) {
+        if (overflow) break;
+        const ch = board[i];
+        if (!trie[ch]) continue;
+        dfs(i, [i], trie[ch], ch);
+      }
+      return { words: [...found], overflow };
+    }
 
     function shuffle(arr) {
       for (let i = arr.length - 1; i > 0; i--) {
@@ -424,11 +423,11 @@ function startEngine(dictionary, wordsByLen) {
         if (!path) continue;
         const board = randomBoard();
         for (let i = 0; i < path.length; i++) board[path[i]] = word[i];
-        const { words } = analyzeBoard(board, trie);
+        const { words, overflow } = analyzeBoardCapped(board, trie, MAX_WORDS);
         reconTested++;
+        if (overflow) continue; // 22e mot trouvé : on abandonne cette grille sans aller plus loin
         const { counts, maxLen } = lengthCounts(words);
         if (maxLen > reconTargetLen) continue; // un mot plus long que voulu existe : on rejette cette grille
-        if (words.length > MAX_WORDS) continue; // trop de mots : on rejette cette grille
         reconFound++;
         self.postMessage({ type:'reconGrid', board, counts, total: words.length, maxLen, longest: word, path, words, targetLen: reconTargetLen });
       }
