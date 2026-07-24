@@ -122,6 +122,23 @@
     color: var(--gold-light); letter-spacing: 0.1em; text-transform: uppercase;
   }
 
+  .card.recon .grid-wrap.clickable { cursor: pointer; }
+  .word-list {
+    display: flex; flex-wrap: wrap; gap: 6px; justify-content: center;
+    max-width: 380px; padding-top: 4px;
+  }
+  .word-chip {
+    font-family: 'DM Mono', monospace; font-size: 0.66rem; letter-spacing: 0.04em;
+    text-transform: uppercase; color: var(--text-dim);
+    background: var(--surface2); border: 1px solid var(--border);
+    border-radius: 6px; padding: 4px 8px; cursor: pointer; transition: all .15s;
+  }
+  .word-chip:hover { border-color: var(--recon); color: #cfe0f0; }
+  .word-chip.selected {
+    background: rgba(122,158,196,0.18); border-color: var(--recon); color: #cfe0f0;
+    font-weight: 500;
+  }
+
   table.len-table {
     border-collapse: collapse; font-size: 0.72rem; width: 100%; max-width: 380px;
   }
@@ -220,6 +237,36 @@ async function loadDictionary() {
   await new Promise(r=>setTimeout(r,500));
   document.getElementById('loadingScreen').style.display = 'none';
   startEngine(dictionary, words16);
+}
+
+function findPathClient(board, word) {
+  const N = 4;
+  const adj = [];
+  for (let i = 0; i < 16; i++) {
+    adj[i] = [];
+    const r = Math.floor(i / N), c = i % N;
+    for (let j = 0; j < 16; j++) {
+      const dr = Math.abs(r - Math.floor(j/N)), dc = Math.abs(c - j%N);
+      if (dr<=1 && dc<=1 && i!==j) adj[i].push(j);
+    }
+  }
+  function dfs(idx, path, wi) {
+    if (wi === word.length) return true;
+    for (const nb of adj[idx]) {
+      if (path.includes(nb)) continue;
+      if (board[nb] !== word[wi]) continue;
+      path.push(nb);
+      if (dfs(nb, path, wi+1)) return true;
+      path.pop();
+    }
+    return false;
+  }
+  for (let i = 0; i < 16; i++) {
+    if (board[i] !== word[0]) continue;
+    const path = [i];
+    if (dfs(i, path, 1)) return path;
+  }
+  return null;
 }
 
 // ══════════════════════════════════════════════════════════
@@ -433,7 +480,7 @@ function startEngine(dictionary, words16) {
         if (isFirst || words.length < reconBestTotal) {
           reconBestTotal = words.length;
           const { counts, maxLen } = lengthCounts(words);
-          self.postMessage({ type:'reconGrid', board, counts, total: words.length, maxLen, longest: word, path, first: isFirst });
+          self.postMessage({ type:'reconGrid', board, counts, total: words.length, maxLen, longest: word, path, first: isFirst, words });
         }
       }
       self.postMessage({ type:'reconProgress', tested: reconTested });
@@ -570,46 +617,97 @@ function startEngine(dictionary, words16) {
 
     const grid = document.createElement('div');
     grid.className = 'grid';
-    const orderOf = new Map();
-    if (data.path) data.path.forEach((idx, i) => orderOf.set(idx, i+1));
+    const tiles = [];
     data.board.forEach((letter, i) => {
       const t = document.createElement('div');
-      t.className = 'tile' + (orderOf.has(i) ? ' in-path' : '');
+      t.className = 'tile';
       t.textContent = letter;
-      if (orderOf.has(i)) {
-        const badge = document.createElement('span');
-        badge.className = 'order-badge';
-        badge.textContent = orderOf.get(i);
-        t.appendChild(badge);
-      }
+      const badgeEl = document.createElement('span');
+      badgeEl.className = 'order-badge';
+      badgeEl.style.display = 'none';
+      t.appendChild(badgeEl);
+      tiles.push(t);
       grid.appendChild(t);
     });
     gridWrap.appendChild(grid);
 
-    if (data.path && data.path.length >= 2) {
-      const TILE = 62, GAP = 6;
-      const centerOf = idx => {
-        const r = Math.floor(idx / 4), c = idx % 4;
-        return { x: c*(TILE+GAP) + TILE/2, y: r*(TILE+GAP) + TILE/2 };
-      };
-      const d = data.path.map((idx, k) => {
-        const p = centerOf(idx);
-        return `${k ? 'L' : 'M'}${p.x.toFixed(1)},${p.y.toFixed(1)}`;
-      }).join(' ');
-      const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
-      svg.setAttribute('class', 'path-svg');
-      svg.setAttribute('viewBox', `0 0 278 278`);
-      svg.innerHTML = `<path d="${d}"/>`;
-      gridWrap.appendChild(svg);
+    const TILE = 62, GAP = 6;
+    const centerOf = idx => {
+      const r = Math.floor(idx / 4), c = idx % 4;
+      return { x: c*(TILE+GAP) + TILE/2, y: r*(TILE+GAP) + TILE/2 };
+    };
+    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    svg.setAttribute('class', 'path-svg');
+    svg.setAttribute('viewBox', `0 0 278 278`);
+    const svgPath = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    svg.appendChild(svgPath);
+    gridWrap.appendChild(svg);
+
+    const wordEl = document.createElement('div');
+    wordEl.className = 'word-display';
+
+    function renderPath(path, word) {
+      tiles.forEach(t => {
+        t.classList.remove('in-path');
+        t.querySelector('.order-badge').style.display = 'none';
+      });
+      if (path && path.length) {
+        path.forEach((idx, i) => {
+          tiles[idx].classList.add('in-path');
+          const b = tiles[idx].querySelector('.order-badge');
+          b.textContent = i + 1;
+          b.style.display = '';
+        });
+      }
+      if (path && path.length >= 2) {
+        const d = path.map((idx, k) => {
+          const p = centerOf(idx);
+          return `${k ? 'L' : 'M'}${p.x.toFixed(1)},${p.y.toFixed(1)}`;
+        }).join(' ');
+        svgPath.setAttribute('d', d);
+        svg.style.display = '';
+      } else {
+        svgPath.setAttribute('d', '');
+      }
+      if (word) wordEl.textContent = word;
     }
 
-    card.appendChild(gridWrap);
+    renderPath(data.path, data.longest);
 
-    if (data.longest) {
-      const wordEl = document.createElement('div');
-      wordEl.className = 'word-display';
-      wordEl.textContent = data.longest;
-      card.appendChild(wordEl);
+    card.appendChild(gridWrap);
+    if (data.longest) card.appendChild(wordEl);
+
+    if (kind === 'recon' && data.words && data.words.length) {
+      gridWrap.classList.add('clickable');
+      const wordsListEl = document.createElement('div');
+      wordsListEl.className = 'word-list';
+      wordsListEl.style.display = 'none';
+      const sortedWords = data.words.slice().sort((a,b) => b.length - a.length || a.localeCompare(b));
+      sortedWords.forEach(w => {
+        const chip = document.createElement('span');
+        chip.className = 'word-chip';
+        chip.textContent = w;
+        chip.addEventListener('click', () => {
+          const p = findPathClient(data.board, w);
+          if (!p) return;
+          wordsListEl.querySelectorAll('.word-chip.selected').forEach(c => c.classList.remove('selected'));
+          chip.classList.add('selected');
+          renderPath(p, w);
+        });
+        wordsListEl.appendChild(chip);
+      });
+      card.appendChild(wordsListEl);
+
+      gridWrap.addEventListener('click', () => {
+        const showing = wordsListEl.style.display !== 'none';
+        if (showing) {
+          wordsListEl.style.display = 'none';
+          wordsListEl.querySelectorAll('.word-chip.selected').forEach(c => c.classList.remove('selected'));
+          renderPath(data.path, data.longest);
+        } else {
+          wordsListEl.style.display = 'flex';
+        }
+      });
     }
 
     const table = document.createElement('table');
