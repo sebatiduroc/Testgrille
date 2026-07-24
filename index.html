@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <meta name="theme-color" content="#c8a96e">
-<title>Mots-Lierre — Grilles records</title>
+<title>Mots-Lierre — Grilles par longueur</title>
 <style>
   @import url('https://fonts.googleapis.com/css2?family=Playfair+Display:wght@700;900&family=DM+Mono:wght@400;500&display=swap');
 
@@ -30,19 +30,24 @@
     color: var(--gold); letter-spacing: 0.08em; text-transform: uppercase;
     margin-bottom: 10px;
   }
-  #status {
-    font-size: 0.7rem; letter-spacing: 0.12em; color: var(--text-dim);
-    text-transform: uppercase; line-height: 1.8;
-  }
-  #status strong { color: var(--gold); }
   #controls {
-    display: flex; justify-content: center; gap: 10px; margin-top: 14px; flex-wrap: wrap;
+    display: flex; justify-content: center; align-items: center; gap: 10px; margin-top: 14px; flex-wrap: wrap;
+  }
+  #controls label {
+    font-size: 0.68rem; letter-spacing: 0.1em; color: var(--text-dim); text-transform: uppercase;
   }
   #reconStatus {
     font-size: 0.62rem; letter-spacing: 0.1em; color: var(--text-dim);
-    text-transform: uppercase; margin-top: 8px;
+    text-transform: uppercase; margin-top: 12px;
   }
   #reconStatus strong { color: var(--recon); }
+  select {
+    font-family: 'DM Mono', monospace; font-size: 0.7rem;
+    letter-spacing: 0.08em; text-transform: uppercase;
+    padding: 8px 12px; border-radius: 10px;
+    border: 1.5px solid var(--recon); background: var(--surface); color: var(--recon);
+  }
+  select:disabled { opacity: 0.4; }
   button {
     font-family: 'DM Mono', monospace; font-size: 0.7rem;
     letter-spacing: 0.12em; text-transform: uppercase;
@@ -75,7 +80,6 @@
     text-transform: uppercase; color: #0d0d0f; background: var(--gold);
     border-radius: 6px; padding: 3px 10px; font-weight: 500; margin-bottom: 6px;
   }
-  .card.first .card-badge { background: var(--cream); }
   .card.recon .card-badge { background: var(--recon); }
   .card.recon .path-svg path { stroke: var(--recon); filter: drop-shadow(0 0 4px rgba(122,158,196,.6)); }
   .card.recon .tile.in-path { border-color: var(--recon); color: #cfe0f0; }
@@ -177,14 +181,13 @@
 </div>
 
 <header>
-  <h1>Grilles records</h1>
-  <div id="status">Préparation…</div>
+  <h1>Grilles par longueur de mot</h1>
   <div id="controls">
-    <button id="btnStartRecords" disabled>Rechercher des grilles records</button>
-    <button id="btnReconstruct" class="recon-btn" disabled>Rétroconstruction (mot de 16 lettres, mots décroissants)</button>
-    <button id="btnPause" style="display:none;">Pause</button>
+    <label for="lenSelect">Longueur du mot le plus long :</label>
+    <select id="lenSelect" disabled></select>
+    <button id="btnReconstruct" class="recon-btn" disabled>Lancer</button>
   </div>
-  <div id="reconStatus"></div>
+  <div id="reconStatus">Préparation…</div>
 </header>
 
 <div id="feed"></div>
@@ -233,10 +236,15 @@ async function loadDictionary() {
   }
   setBar(100);
   setMsg(`${dictionary.size.toLocaleString('fr-FR')} mots chargés ✓`);
-  const words16 = [...dictionary].filter(w => w.length === 16);
+
+  const wordsByLen = {};
+  for (const w of dictionary) {
+    (wordsByLen[w.length] = wordsByLen[w.length] || []).push(w);
+  }
+
   await new Promise(r=>setTimeout(r,500));
   document.getElementById('loadingScreen').style.display = 'none';
-  startEngine(dictionary, words16);
+  startEngine(dictionary, wordsByLen);
 }
 
 function findPathClient(board, word) {
@@ -272,7 +280,7 @@ function findPathClient(board, word) {
 // ══════════════════════════════════════════════════════════
 // WORKER — trie + génération/analyse de grilles en tâche de fond
 // ══════════════════════════════════════════════════════════
-function startEngine(dictionary, words16) {
+function startEngine(dictionary, wordsByLen) {
   const workerCode = `
     function buildTrie(words) {
       const root = Object.create(null);
@@ -318,37 +326,6 @@ function startEngine(dictionary, words16) {
       return { words: [...found] };
     }
 
-    // Trouve un chemin (suite d'indices de cases adjacentes) formant le mot "word" sur "board".
-    function findPath(board, word) {
-      const N = 4;
-      const adj = [];
-      for (let i = 0; i < 16; i++) {
-        adj[i] = [];
-        const r = Math.floor(i / N), c = i % N;
-        for (let j = 0; j < 16; j++) {
-          const dr = Math.abs(r - Math.floor(j/N)), dc = Math.abs(c - j%N);
-          if (dr<=1 && dc<=1 && i!==j) adj[i].push(j);
-        }
-      }
-      function dfs(idx, path, wi) {
-        if (wi === word.length) return true;
-        for (const nb of adj[idx]) {
-          if (path.includes(nb)) continue;
-          if (board[nb] !== word[wi]) continue;
-          path.push(nb);
-          if (dfs(nb, path, wi+1)) return true;
-          path.pop();
-        }
-        return false;
-      }
-      for (let i = 0; i < 16; i++) {
-        if (board[i] !== word[0]) continue;
-        const path = [i];
-        if (dfs(i, path, 1)) return path;
-      }
-      return null;
-    }
-
     function buildAdjacency() {
       const N = 4;
       const adj = [];
@@ -372,9 +349,9 @@ function startEngine(dictionary, words16) {
       return arr;
     }
 
-    // Cherche un chemin qui visite les 16 cases une seule fois (chemin hamiltonien),
+    // Cherche un chemin (suite d'indices de cases adjacentes, sans répétition) de longueur L,
     // via un parcours en profondeur avec ordre de voisins aléatoire et retour arrière.
-    function randomHamiltonianPath() {
+    function randomPathOfLength(L) {
       for (let attempt = 0; attempt < 300; attempt++) {
         const visited = new Array(16).fill(false);
         const path = [];
@@ -384,7 +361,7 @@ function startEngine(dictionary, words16) {
         const STEP_CAP = 20000;
         let stepLimitHit = false;
         function dfs(node) {
-          if (path.length === 16) return true;
+          if (path.length === L) return true;
           const neighbors = shuffle(ADJ[node].slice());
           for (const nb of neighbors) {
             if (visited[nb]) continue;
@@ -414,10 +391,7 @@ function startEngine(dictionary, words16) {
     }
 
     let trie = null;
-    let words16 = [];
-    let running = false;
-    let record = -1;
-    let tested = 0;
+    let wordsByLen = {};
 
     function lengthCounts(words) {
       const counts = {};
@@ -429,58 +403,34 @@ function startEngine(dictionary, words16) {
       return { counts, maxLen };
     }
 
-    function loop() {
-      if (!running) return;
-      const BATCH = 60;
-      for (let i = 0; i < BATCH; i++) {
-        const board = randomBoard();
-        const { words } = analyzeBoard(board, trie);
-        tested++;
-        const { counts, maxLen } = lengthCounts(words);
-        if (record === -1) {
-          // Phase 1 : première grille avec au moins 100 mots
-          if (words.length >= 100) {
-            record = maxLen;
-            const longest = words.find(w => w.length === maxLen);
-            const path = findPath(board, longest);
-            self.postMessage({ type:'grid', board, counts, total: words.length, maxLen, tested, first:true, longest, path });
-          }
-        } else if (maxLen > record) {
-          record = maxLen;
-          const longest = words.find(w => w.length === maxLen);
-          const path = findPath(board, longest);
-          self.postMessage({ type:'grid', board, counts, total: words.length, maxLen, tested, first:false, longest, path });
-        }
-      }
-      self.postMessage({ type:'progress', tested });
-      setTimeout(loop, 0);
-    }
-
     let reconRunning = false;
     let reconBestTotal = null;
     let reconTested = 0;
+    let reconTargetLen = null;
 
     function reconLoop() {
       if (!reconRunning) return;
-      if (!words16.length) {
-        self.postMessage({ type:'reconError', message:'Aucun mot de 16 lettres dans le dictionnaire.' });
+      const list = wordsByLen[reconTargetLen];
+      if (!list || !list.length) {
+        self.postMessage({ type:'reconError', message:'Aucun mot de ' + reconTargetLen + ' lettres dans le dictionnaire.' });
         reconRunning = false;
         return;
       }
       const BATCH = 40;
       for (let k = 0; k < BATCH; k++) {
-        const word = words16[Math.random()*words16.length|0];
-        const path = randomHamiltonianPath();
+        const word = list[Math.random()*list.length|0];
+        const path = randomPathOfLength(word.length);
         if (!path) continue;
-        const board = new Array(16);
-        for (let i = 0; i < 16; i++) board[path[i]] = word[i];
+        const board = randomBoard();
+        for (let i = 0; i < path.length; i++) board[path[i]] = word[i];
         const { words } = analyzeBoard(board, trie);
         reconTested++;
+        const { counts, maxLen } = lengthCounts(words);
+        if (maxLen > reconTargetLen) continue; // un mot plus long que voulu existe : on rejette cette grille
         const isFirst = reconBestTotal === null;
         if (isFirst || words.length < reconBestTotal) {
           reconBestTotal = words.length;
-          const { counts, maxLen } = lengthCounts(words);
-          self.postMessage({ type:'reconGrid', board, counts, total: words.length, maxLen, longest: word, path, first: isFirst, words });
+          self.postMessage({ type:'reconGrid', board, counts, total: words.length, maxLen, longest: word, path, first: isFirst, words, targetLen: reconTargetLen });
         }
       }
       self.postMessage({ type:'reconProgress', tested: reconTested });
@@ -490,17 +440,10 @@ function startEngine(dictionary, words16) {
     self.onmessage = function(e) {
       if (e.data.type === 'build') {
         trie = buildTrie(e.data.words);
-        words16 = e.data.words16 || [];
+        wordsByLen = e.data.wordsByLen || {};
         self.postMessage({ type:'ready' });
-      } else if (e.data.type === 'start') {
-        running = true;
-        loop();
-      } else if (e.data.type === 'pause') {
-        running = false;
-      } else if (e.data.type === 'resume') {
-        running = true;
-        loop();
       } else if (e.data.type === 'reconstruct') {
+        reconTargetLen = e.data.targetLen;
         reconBestTotal = null;
         reconTested = 0;
         reconRunning = true;
@@ -515,14 +458,20 @@ function startEngine(dictionary, words16) {
   `;
   const worker = new Worker(URL.createObjectURL(new Blob([workerCode], {type:'application/javascript'})));
 
-  const statusEl = document.getElementById('status');
   const feedEl = document.getElementById('feed');
-  const btnPause = document.getElementById('btnPause');
-  const btnStartRecords = document.getElementById('btnStartRecords');
   const btnReconstruct = document.getElementById('btnReconstruct');
   const reconStatusEl = document.getElementById('reconStatus');
-  let running = false;
-  let lastTested = 0;
+  const lenSelect = document.getElementById('lenSelect');
+
+  const availableLens = Object.keys(wordsByLen).map(Number).filter(l => wordsByLen[l].length > 0).sort((a,b)=>a-b);
+  availableLens.forEach(l => {
+    const opt = document.createElement('option');
+    opt.value = l;
+    opt.textContent = `${l} lettres (${wordsByLen[l].length.toLocaleString('fr-FR')} mots)`;
+    lenSelect.appendChild(opt);
+  });
+  if (availableLens.length) lenSelect.value = availableLens[Math.floor(availableLens.length/2)];
+
   let reconCount = 0;
   let reconTested = 0;
   let reconActive = false;
@@ -531,16 +480,9 @@ function startEngine(dictionary, words16) {
 
   worker.onmessage = (e) => {
     if (e.data.type === 'ready') {
-      statusEl.textContent = 'Prêt — choisissez un mode ci-dessus.';
-      btnStartRecords.disabled = false;
+      reconStatusEl.textContent = 'Prêt — choisissez une longueur et lancez la recherche.';
+      lenSelect.disabled = false;
       btnReconstruct.disabled = false;
-    } else if (e.data.type === 'progress') {
-      lastTested = e.data.tested;
-      updateStatus();
-    } else if (e.data.type === 'grid') {
-      lastTested = e.data.tested;
-      addCard(e.data, e.data.first ? 'first' : 'record');
-      updateStatus();
     } else if (e.data.type === 'reconGrid') {
       reconCount++;
       reconBestTotal = e.data.total;
@@ -560,51 +502,51 @@ function startEngine(dictionary, words16) {
     reconStatusEl.innerHTML = txt;
   }
 
-  function updateStatus() {
-    statusEl.innerHTML = `<strong>${lastTested.toLocaleString('fr-FR')}</strong> grilles testées`;
+  function resetSearch() {
+    reconActive = false;
+    reconRunning = false;
+    reconCount = 0;
+    reconTested = 0;
+    reconBestTotal = null;
+    btnReconstruct.textContent = 'Lancer';
+    reconStatusEl.textContent = 'Prêt — choisissez une longueur et lancez la recherche.';
   }
 
-  btnStartRecords.addEventListener('click', () => {
-    btnStartRecords.disabled = true;
-    btnPause.style.display = 'inline-block';
-    statusEl.textContent = 'Recherche de la première grille (≥ 100 mots)…';
-    worker.postMessage({ type: 'start' });
-    running = true;
-  });
-
-  btnPause.addEventListener('click', () => {
-    running = !running;
-    worker.postMessage({ type: running ? 'resume' : 'pause' });
-    btnPause.textContent = running ? 'Pause' : 'Reprendre';
+  lenSelect.addEventListener('change', () => {
+    if (reconActive) {
+      if (reconRunning) worker.postMessage({ type: 'reconPause' });
+      resetSearch();
+    }
   });
 
   btnReconstruct.addEventListener('click', () => {
     if (!reconActive) {
+      const targetLen = Number(lenSelect.value);
       reconActive = true;
       reconRunning = true;
       reconCount = 0;
       reconTested = 0;
       reconBestTotal = null;
-      worker.postMessage({ type: 'reconstruct' });
-      btnReconstruct.textContent = 'Pause (rétroconstruction)';
+      lenSelect.disabled = true;
+      worker.postMessage({ type: 'reconstruct', targetLen });
+      btnReconstruct.textContent = 'Pause';
     } else {
       reconRunning = !reconRunning;
+      lenSelect.disabled = reconRunning;
       worker.postMessage({ type: reconRunning ? 'reconResume' : 'reconPause' });
-      btnReconstruct.textContent = reconRunning ? 'Pause (rétroconstruction)' : 'Reprendre (rétroconstruction)';
+      btnReconstruct.textContent = reconRunning ? 'Pause' : 'Reprendre';
     }
   });
 
   function addCard(data, kind) {
     const card = document.createElement('div');
-    card.className = 'card' + (kind === 'first' ? ' first' : '') + (kind === 'recon' ? ' recon' : '');
+    card.className = 'card' + (kind === 'recon' ? ' recon' : '');
 
     const head = document.createElement('div');
     head.className = 'card-head';
     const badge = document.createElement('div');
     badge.className = 'card-badge';
-    if (kind === 'first') badge.textContent = 'Première grille — 100+ mots';
-    else if (kind === 'recon') badge.textContent = 'Rétroconstruction — mot de 16 lettres';
-    else badge.textContent = `Nouveau record — mot de ${data.maxLen} lettres`;
+    badge.textContent = `Rétroconstruction — mot de ${data.targetLen} lettres`;
     head.appendChild(badge);
     const sub = document.createElement('div');
     sub.className = 'card-sub';
@@ -727,7 +669,7 @@ function startEngine(dictionary, words16) {
     feedEl.appendChild(card);
   }
 
-  worker.postMessage({ type: 'build', words: [...dictionary], words16 });
+  worker.postMessage({ type: 'build', words: [...dictionary], wordsByLen });
 }
 
 loadDictionary();
