@@ -164,7 +164,7 @@
   <div id="status">Préparation…</div>
   <div id="controls">
     <button id="btnStartRecords" disabled>Rechercher des grilles records</button>
-    <button id="btnReconstruct" class="recon-btn" disabled>Générer 10 grilles (mot de 16 lettres)</button>
+    <button id="btnReconstruct" class="recon-btn" disabled>Rétroconstruction (mot de 16 lettres, mots décroissants)</button>
     <button id="btnPause" style="display:none;">Pause</button>
   </div>
   <div id="reconStatus"></div>
@@ -409,21 +409,35 @@ function startEngine(dictionary, words16) {
       setTimeout(loop, 0);
     }
 
-    function reconstructBatch(count) {
+    let reconRunning = false;
+    let reconBestTotal = null;
+    let reconTested = 0;
+
+    function reconLoop() {
+      if (!reconRunning) return;
       if (!words16.length) {
         self.postMessage({ type:'reconError', message:'Aucun mot de 16 lettres dans le dictionnaire.' });
+        reconRunning = false;
         return;
       }
-      for (let k = 0; k < count; k++) {
+      const BATCH = 40;
+      for (let k = 0; k < BATCH; k++) {
         const word = words16[Math.random()*words16.length|0];
         const path = randomHamiltonianPath();
         if (!path) continue;
         const board = new Array(16);
         for (let i = 0; i < 16; i++) board[path[i]] = word[i];
         const { words } = analyzeBoard(board, trie);
-        const { counts, maxLen } = lengthCounts(words);
-        self.postMessage({ type:'reconGrid', board, counts, total: words.length, maxLen, longest: word, path });
+        reconTested++;
+        const isFirst = reconBestTotal === null;
+        if (isFirst || words.length < reconBestTotal) {
+          reconBestTotal = words.length;
+          const { counts, maxLen } = lengthCounts(words);
+          self.postMessage({ type:'reconGrid', board, counts, total: words.length, maxLen, longest: word, path, first: isFirst });
+        }
       }
+      self.postMessage({ type:'reconProgress', tested: reconTested });
+      setTimeout(reconLoop, 0);
     }
 
     self.onmessage = function(e) {
@@ -440,7 +454,15 @@ function startEngine(dictionary, words16) {
         running = true;
         loop();
       } else if (e.data.type === 'reconstruct') {
-        reconstructBatch(e.data.count || 10);
+        reconBestTotal = null;
+        reconTested = 0;
+        reconRunning = true;
+        reconLoop();
+      } else if (e.data.type === 'reconPause') {
+        reconRunning = false;
+      } else if (e.data.type === 'reconResume') {
+        reconRunning = true;
+        reconLoop();
       }
     };
   `;
@@ -455,6 +477,10 @@ function startEngine(dictionary, words16) {
   let running = false;
   let lastTested = 0;
   let reconCount = 0;
+  let reconTested = 0;
+  let reconActive = false;
+  let reconRunning = false;
+  let reconBestTotal = null;
 
   worker.onmessage = (e) => {
     if (e.data.type === 'ready') {
@@ -470,12 +496,22 @@ function startEngine(dictionary, words16) {
       updateStatus();
     } else if (e.data.type === 'reconGrid') {
       reconCount++;
+      reconBestTotal = e.data.total;
       addCard(e.data, 'recon');
-      reconStatusEl.innerHTML = `<strong>${reconCount}</strong> grilles rétroconstruites`;
+      updateReconStatus();
+    } else if (e.data.type === 'reconProgress') {
+      reconTested = e.data.tested;
+      updateReconStatus();
     } else if (e.data.type === 'reconError') {
       reconStatusEl.textContent = e.data.message;
     }
   };
+
+  function updateReconStatus() {
+    let txt = `<strong>${reconCount}</strong> grille${reconCount>1?'s':''} affichée${reconCount>1?'s':''} · ${reconTested.toLocaleString('fr-FR')} testée${reconTested>1?'s':''}`;
+    if (reconBestTotal !== null) txt += ` · meilleure : <strong>${reconBestTotal}</strong> mots`;
+    reconStatusEl.innerHTML = txt;
+  }
 
   function updateStatus() {
     statusEl.innerHTML = `<strong>${lastTested.toLocaleString('fr-FR')}</strong> grilles testées`;
@@ -496,7 +532,19 @@ function startEngine(dictionary, words16) {
   });
 
   btnReconstruct.addEventListener('click', () => {
-    worker.postMessage({ type: 'reconstruct', count: 10 });
+    if (!reconActive) {
+      reconActive = true;
+      reconRunning = true;
+      reconCount = 0;
+      reconTested = 0;
+      reconBestTotal = null;
+      worker.postMessage({ type: 'reconstruct' });
+      btnReconstruct.textContent = 'Pause (rétroconstruction)';
+    } else {
+      reconRunning = !reconRunning;
+      worker.postMessage({ type: reconRunning ? 'reconResume' : 'reconPause' });
+      btnReconstruct.textContent = reconRunning ? 'Pause (rétroconstruction)' : 'Reprendre (rétroconstruction)';
+    }
   });
 
   function addCard(data, kind) {
