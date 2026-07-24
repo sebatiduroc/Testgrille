@@ -12,7 +12,7 @@
     --bg:#0d0d0f; --surface:#16161a; --surface2:#1e1e24;
     --border:#2a2a35; --gold:#c8a96e; --gold-light:#e8c98e;
     --cream:#f0e8d8; --text:#d8d0c8; --text-dim:#8a8578;
-    --tile-bg:#1a1a22; --tile-border:#30304a;
+    --tile-bg:#1a1a22; --tile-border:#30304a; --recon:#7a9ec4;
   }
   * { margin:0; padding:0; box-sizing:border-box; }
   body {
@@ -36,8 +36,13 @@
   }
   #status strong { color: var(--gold); }
   #controls {
-    display: flex; justify-content: center; gap: 10px; margin-top: 14px;
+    display: flex; justify-content: center; gap: 10px; margin-top: 14px; flex-wrap: wrap;
   }
+  #reconStatus {
+    font-size: 0.62rem; letter-spacing: 0.1em; color: var(--text-dim);
+    text-transform: uppercase; margin-top: 8px;
+  }
+  #reconStatus strong { color: var(--recon); }
   button {
     font-family: 'DM Mono', monospace; font-size: 0.7rem;
     letter-spacing: 0.12em; text-transform: uppercase;
@@ -45,6 +50,8 @@
     border: 1.5px solid var(--gold); background: transparent; color: var(--gold);
     transition: all .15s;
   }
+  button.recon-btn { border-color: var(--recon); color: var(--recon); }
+  button.recon-btn:hover { background: rgba(122,158,196,0.1); }
   button:hover { background: rgba(200,169,110,0.1); }
   button:disabled { opacity: 0.4; cursor: default; }
 
@@ -69,6 +76,11 @@
     border-radius: 6px; padding: 3px 10px; font-weight: 500; margin-bottom: 6px;
   }
   .card.first .card-badge { background: var(--cream); }
+  .card.recon .card-badge { background: var(--recon); }
+  .card.recon .path-svg path { stroke: var(--recon); filter: drop-shadow(0 0 4px rgba(122,158,196,.6)); }
+  .card.recon .tile.in-path { border-color: var(--recon); color: #cfe0f0; }
+  .card.recon .tile .order-badge { color: var(--recon); }
+  .card.recon .word-display { color: #cfe0f0; }
   .card-sub {
     font-size: 0.62rem; letter-spacing: 0.1em; color: var(--text-dim);
     text-transform: uppercase; margin-top: 2px;
@@ -151,8 +163,11 @@
   <h1>Grilles records</h1>
   <div id="status">Préparation…</div>
   <div id="controls">
-    <button id="btnPause" disabled>Pause</button>
+    <button id="btnStartRecords" disabled>Rechercher des grilles records</button>
+    <button id="btnReconstruct" class="recon-btn" disabled>Générer 10 grilles (mot de 16 lettres)</button>
+    <button id="btnPause" style="display:none;">Pause</button>
   </div>
+  <div id="reconStatus"></div>
 </header>
 
 <div id="feed"></div>
@@ -201,15 +216,16 @@ async function loadDictionary() {
   }
   setBar(100);
   setMsg(`${dictionary.size.toLocaleString('fr-FR')} mots chargés ✓`);
+  const words16 = [...dictionary].filter(w => w.length === 16);
   await new Promise(r=>setTimeout(r,500));
   document.getElementById('loadingScreen').style.display = 'none';
-  startEngine(dictionary);
+  startEngine(dictionary, words16);
 }
 
 // ══════════════════════════════════════════════════════════
 // WORKER — trie + génération/analyse de grilles en tâche de fond
 // ══════════════════════════════════════════════════════════
-function startEngine(dictionary) {
+function startEngine(dictionary, words16) {
   const workerCode = `
     function buildTrie(words) {
       const root = Object.create(null);
@@ -286,6 +302,59 @@ function startEngine(dictionary) {
       return null;
     }
 
+    function buildAdjacency() {
+      const N = 4;
+      const adj = [];
+      for (let i = 0; i < 16; i++) {
+        adj[i] = [];
+        const r = Math.floor(i / N), c = i % N;
+        for (let j = 0; j < 16; j++) {
+          const dr = Math.abs(r - Math.floor(j/N)), dc = Math.abs(c - j%N);
+          if (dr<=1 && dc<=1 && i!==j) adj[i].push(j);
+        }
+      }
+      return adj;
+    }
+    const ADJ = buildAdjacency();
+
+    function shuffle(arr) {
+      for (let i = arr.length - 1; i > 0; i--) {
+        const j = Math.random()*(i+1)|0;
+        const tmp = arr[i]; arr[i] = arr[j]; arr[j] = tmp;
+      }
+      return arr;
+    }
+
+    // Cherche un chemin qui visite les 16 cases une seule fois (chemin hamiltonien),
+    // via un parcours en profondeur avec ordre de voisins aléatoire et retour arrière.
+    function randomHamiltonianPath() {
+      for (let attempt = 0; attempt < 300; attempt++) {
+        const visited = new Array(16).fill(false);
+        const path = [];
+        const start = Math.random()*16|0;
+        path.push(start); visited[start] = true;
+        let steps = 0;
+        const STEP_CAP = 20000;
+        let stepLimitHit = false;
+        function dfs(node) {
+          if (path.length === 16) return true;
+          const neighbors = shuffle(ADJ[node].slice());
+          for (const nb of neighbors) {
+            if (visited[nb]) continue;
+            steps++;
+            if (steps > STEP_CAP) { stepLimitHit = true; return false; }
+            visited[nb] = true; path.push(nb);
+            if (dfs(nb)) return true;
+            path.pop(); visited[nb] = false;
+            if (stepLimitHit) return false;
+          }
+          return false;
+        }
+        if (dfs(start)) return path;
+      }
+      return null;
+    }
+
     const FRENCH_DICE_W = [
       'AELMNU','AEHLOS','AINOTW','ABORTU','EILTUZ','AEIPSV','AEINRT',
       'EIORTY','ADEILS','ACEINO','ACELRS','EJLRST','EIPRSU','AEKOQS',
@@ -298,6 +367,7 @@ function startEngine(dictionary) {
     }
 
     let trie = null;
+    let words16 = [];
     let running = false;
     let record = -1;
     let tested = 0;
@@ -339,9 +409,27 @@ function startEngine(dictionary) {
       setTimeout(loop, 0);
     }
 
+    function reconstructBatch(count) {
+      if (!words16.length) {
+        self.postMessage({ type:'reconError', message:'Aucun mot de 16 lettres dans le dictionnaire.' });
+        return;
+      }
+      for (let k = 0; k < count; k++) {
+        const word = words16[Math.random()*words16.length|0];
+        const path = randomHamiltonianPath();
+        if (!path) continue;
+        const board = new Array(16);
+        for (let i = 0; i < 16; i++) board[path[i]] = word[i];
+        const { words } = analyzeBoard(board, trie);
+        const { counts, maxLen } = lengthCounts(words);
+        self.postMessage({ type:'reconGrid', board, counts, total: words.length, maxLen, longest: word, path });
+      }
+    }
+
     self.onmessage = function(e) {
       if (e.data.type === 'build') {
         trie = buildTrie(e.data.words);
+        words16 = e.data.words16 || [];
         self.postMessage({ type:'ready' });
       } else if (e.data.type === 'start') {
         running = true;
@@ -351,6 +439,8 @@ function startEngine(dictionary) {
       } else if (e.data.type === 'resume') {
         running = true;
         loop();
+      } else if (e.data.type === 'reconstruct') {
+        reconstructBatch(e.data.count || 10);
       }
     };
   `;
@@ -359,22 +449,31 @@ function startEngine(dictionary) {
   const statusEl = document.getElementById('status');
   const feedEl = document.getElementById('feed');
   const btnPause = document.getElementById('btnPause');
+  const btnStartRecords = document.getElementById('btnStartRecords');
+  const btnReconstruct = document.getElementById('btnReconstruct');
+  const reconStatusEl = document.getElementById('reconStatus');
   let running = false;
   let lastTested = 0;
+  let reconCount = 0;
 
   worker.onmessage = (e) => {
     if (e.data.type === 'ready') {
-      statusEl.innerHTML = 'Recherche de la première grille (≥ 100 mots)…';
-      worker.postMessage({ type: 'start' });
-      running = true;
-      btnPause.disabled = false;
+      statusEl.textContent = 'Prêt — choisissez un mode ci-dessus.';
+      btnStartRecords.disabled = false;
+      btnReconstruct.disabled = false;
     } else if (e.data.type === 'progress') {
       lastTested = e.data.tested;
       updateStatus();
     } else if (e.data.type === 'grid') {
       lastTested = e.data.tested;
-      addCard(e.data);
+      addCard(e.data, e.data.first ? 'first' : 'record');
       updateStatus();
+    } else if (e.data.type === 'reconGrid') {
+      reconCount++;
+      addCard(e.data, 'recon');
+      reconStatusEl.innerHTML = `<strong>${reconCount}</strong> grilles rétroconstruites`;
+    } else if (e.data.type === 'reconError') {
+      reconStatusEl.textContent = e.data.message;
     }
   };
 
@@ -382,21 +481,35 @@ function startEngine(dictionary) {
     statusEl.innerHTML = `<strong>${lastTested.toLocaleString('fr-FR')}</strong> grilles testées`;
   }
 
+  btnStartRecords.addEventListener('click', () => {
+    btnStartRecords.disabled = true;
+    btnPause.style.display = 'inline-block';
+    statusEl.textContent = 'Recherche de la première grille (≥ 100 mots)…';
+    worker.postMessage({ type: 'start' });
+    running = true;
+  });
+
   btnPause.addEventListener('click', () => {
     running = !running;
     worker.postMessage({ type: running ? 'resume' : 'pause' });
     btnPause.textContent = running ? 'Pause' : 'Reprendre';
   });
 
-  function addCard(data) {
+  btnReconstruct.addEventListener('click', () => {
+    worker.postMessage({ type: 'reconstruct', count: 10 });
+  });
+
+  function addCard(data, kind) {
     const card = document.createElement('div');
-    card.className = 'card' + (data.first ? ' first' : '');
+    card.className = 'card' + (kind === 'first' ? ' first' : '') + (kind === 'recon' ? ' recon' : '');
 
     const head = document.createElement('div');
     head.className = 'card-head';
     const badge = document.createElement('div');
     badge.className = 'card-badge';
-    badge.textContent = data.first ? 'Première grille — 100+ mots' : `Nouveau record — mot de ${data.maxLen} lettres`;
+    if (kind === 'first') badge.textContent = 'Première grille — 100+ mots';
+    else if (kind === 'recon') badge.textContent = 'Rétroconstruction — mot de 16 lettres';
+    else badge.textContent = `Nouveau record — mot de ${data.maxLen} lettres`;
     head.appendChild(badge);
     const sub = document.createElement('div');
     sub.className = 'card-sub';
@@ -468,7 +581,7 @@ function startEngine(dictionary) {
     feedEl.appendChild(card);
   }
 
-  worker.postMessage({ type: 'build', words: [...dictionary] });
+  worker.postMessage({ type: 'build', words: [...dictionary], words16 });
 }
 
 loadDictionary();
