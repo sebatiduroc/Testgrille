@@ -548,8 +548,17 @@ function startEngine(dictionary, wordsByLen) {
       return false;
     }
 
+    // Remplissage des cases restantes : n'importe quelle lettre de l'alphabet, au hasard.
+    const ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'.split('');
+    function randomAnyLetterBoard() {
+      const arr = new Array(16);
+      for (let i = 0; i < 16; i++) arr[i] = ALPHABET[Math.random()*26|0];
+      return arr;
+    }
+
     // Construit une grille candidate en essayant de placer, dans un ordre aléatoire,
-    // le plus de mots-chiffres possible (placement glouton), puis remplit le reste au hasard.
+    // le plus de mots-chiffres possible (placement glouton), puis remplit le reste
+    // avec des lettres quelconques (pas de dés).
     function buildDigitsCandidate() {
       const board = new Array(16).fill(null);
       const assigned = new Array(16).fill(false);
@@ -559,7 +568,7 @@ function startEngine(dictionary, wordsByLen) {
         if (budget.steps <= 0) break;
         tryPlaceDigitWord(board, assigned, word, budget);
       }
-      const filler = randomBoard();
+      const filler = randomAnyLetterBoard();
       for (let i = 0; i < 16; i++) if (!assigned[i]) board[i] = filler[i];
       return board;
     }
@@ -567,7 +576,6 @@ function startEngine(dictionary, wordsByLen) {
     let digitsRunning = false;
     let digitsTested = 0;
     let digitsBest = -1;
-    const DIGITS_MAX_WORDS = 19;
 
     function digitsLoop() {
       if (!digitsRunning) return;
@@ -575,15 +583,16 @@ function startEngine(dictionary, wordsByLen) {
       for (let k = 0; k < BATCH; k++) {
         const board = buildDigitsCandidate();
         digitsTested++;
-        const { words, overflow } = analyzeBoardCapped(board, trie, DIGITS_MAX_WORDS);
-        if (overflow) continue; // 20e mot trouvé : on abandonne cette grille
         const digits = [];
         for (const w of DIGIT_WORDS) {
           const p = pathExists(board, w);
           if (p) digits.push({ word: w, path: p });
         }
-        if (digits.length > digitsBest) {
+        // affiche toute grille avec autant ou plus de chiffres que la précédente affichée,
+        // sans se soucier du nombre total de mots de la grille
+        if (digits.length >= digitsBest) {
           digitsBest = digits.length;
+          const { words } = analyzeBoardCapped(board, trie, Infinity);
           const { counts, maxLen } = lengthCounts(words);
           self.postMessage({ type:'digitsGrid', board, counts, total: words.length, maxLen, words, digits, digitCount: digits.length });
         }
