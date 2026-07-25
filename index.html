@@ -748,6 +748,7 @@ function startEngine(dictionary, wordsByLen) {
       digitsFound++;
       addCard(e.data, 'digits');
       updateDigitsStatus();
+      if (e.data.digitCount >= 9) playDigitsFanfare();
     } else if (e.data.type === 'digitsProgress') {
       digitsTested = e.data.tested;
       digitsFound = e.data.found;
@@ -860,6 +861,31 @@ function startEngine(dictionary, wordsByLen) {
   });
 
   const VOWELS_CLIENT = ['A','E','I','O','U','Y'];
+
+  let digitsAudioCtx = null;
+  function playDigitsFanfare() {
+    try {
+      if (!digitsAudioCtx) digitsAudioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      if (digitsAudioCtx.state === 'suspended') digitsAudioCtx.resume();
+      const ctx = digitsAudioCtx;
+      const now = ctx.currentTime;
+      const notes = [523.25, 659.25, 783.99, 1046.5, 1318.5]; // C5 E5 G5 C6 E6 — fanfare montante
+      notes.forEach((freq, i) => {
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.type = 'sawtooth';
+        osc.frequency.value = freq;
+        const t = now + i * 0.09;
+        gain.gain.setValueAtTime(0, t);
+        gain.gain.linearRampToValueAtTime(0.35, t + 0.015);
+        gain.gain.exponentialRampToValueAtTime(0.001, t + 0.45);
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.start(t);
+        osc.stop(t + 0.5);
+      });
+    } catch (err) { /* audio indisponible, on ignore */ }
+  }
 
   function addCard(data, kind) {
     const card = document.createElement('div');
@@ -1025,8 +1051,10 @@ function startEngine(dictionary, wordsByLen) {
 
     if (kind === 'digits') {
       card.dataset.total = data.total;
+      card.dataset.digitCount = data.digitCount;
       const siblings = [...digitsFeedEl.children];
-      const next = siblings.find(c => Number(c.dataset.total) > data.total);
+      // Les grilles avec le plus de chiffres passent en premier (9 avant 8, etc.)
+      const next = siblings.find(c => Number(c.dataset.digitCount) < data.digitCount);
       if (next) digitsFeedEl.insertBefore(card, next);
       else digitsFeedEl.appendChild(card);
     } else {
