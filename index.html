@@ -478,17 +478,26 @@ function startEngine(dictionary, wordsByLen) {
     }
 
     // ── Mode "Peu de mots" (≥5 voyelles et ≥5 consonnes) ──
-    // Comme pour le plateau équilibré : 5 voyelles et 5 consonnes garanties,
-    // les 6 cases restantes tirées au hasard (voyelle ou consonne).
+    // Utilise les vrais dés français : on mélange les 16 dés, on assigne 5 rôles
+    // "voyelle", 5 rôles "consonne" et 6 rôles libres, puis pour chaque dé on ne
+    // tire que parmi ses faces compatibles avec le rôle assigné (repli sur toutes
+    // ses faces si aucune ne correspond, ce qui n'arrive avec aucun dé du jeu).
     function randomFewWordsBoard() {
+      const dice = [...FRENCH_DICE_W];
+      for (let i = dice.length-1; i > 0; i--) { const j = Math.random()*(i+1)|0; [dice[i],dice[j]] = [dice[j],dice[i]]; }
       const roles = [];
-      for (let i = 0; i < 5; i++) roles.push(true);   // voyelle garantie
-      for (let i = 0; i < 5; i++) roles.push(false);  // consonne garantie
-      for (let i = 0; i < 6; i++) roles.push(Math.random() < 0.5); // libre
+      for (let i = 0; i < 5; i++) roles.push('V');  // voyelle garantie
+      for (let i = 0; i < 5; i++) roles.push('C');  // consonne garantie
+      for (let i = 0; i < 6; i++) roles.push('F');  // libre
       shuffle(roles);
-      return roles.map(isVowel => isVowel
-        ? VOWELS[Math.random()*VOWELS.length|0]
-        : CONSONANTS[Math.random()*CONSONANTS.length|0]);
+      return dice.map((d, i) => {
+        const role = roles[i];
+        let faces = d.split('');
+        if (role === 'V') faces = faces.filter(ch => VOWELS.includes(ch));
+        else if (role === 'C') faces = faces.filter(ch => !VOWELS.includes(ch));
+        if (!faces.length) faces = d.split('');
+        return faces[Math.random()*faces.length|0];
+      });
     }
 
     let fewWordsRunning = false;
