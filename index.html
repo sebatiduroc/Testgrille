@@ -12,7 +12,7 @@
     --bg:#0d0d0f; --surface:#16161a; --surface2:#1e1e24;
     --border:#2a2a35; --gold:#c8a96e; --gold-light:#e8c98e;
     --cream:#f0e8d8; --text:#d8d0c8; --text-dim:#8a8578;
-    --tile-bg:#1a1a22; --tile-border:#30304a; --recon:#7a9ec4; --digits:#8ec49a; --vowels:#d4a56a;
+    --tile-bg:#1a1a22; --tile-border:#30304a; --recon:#7a9ec4; --digits:#8ec49a; --vowels:#d4a56a; --minlen:#b57ac4;
   }
   * { margin:0; padding:0; box-sizing:border-box; }
   body {
@@ -61,6 +61,8 @@
   button.digits-btn:hover { background: rgba(142,196,154,0.1); }
   button.vowels-btn { border-color: var(--vowels); color: var(--vowels); }
   button.vowels-btn:hover { background: rgba(212,165,106,0.1); }
+  button.minlen-btn { border-color: var(--minlen); color: var(--minlen); }
+  button.minlen-btn:hover { background: rgba(181,122,196,0.1); }
   button:hover { background: rgba(200,169,110,0.1); }
   button:disabled { opacity: 0.4; cursor: default; }
 
@@ -99,6 +101,11 @@
   .card.vowels .tile.in-path { border-color: var(--vowels); color: #f2ddb8; }
   .card.vowels .tile .order-badge { color: var(--vowels); }
   .card.vowels .word-display { color: #f2ddb8; }
+  .card.minlen .card-badge { background: var(--minlen); }
+  .card.minlen .path-svg path { stroke: var(--minlen); filter: drop-shadow(0 0 4px rgba(181,122,196,.6)); }
+  .card.minlen .tile.in-path { border-color: var(--minlen); color: #ecdbf2; }
+  .card.minlen .tile .order-badge { color: var(--minlen); }
+  .card.minlen .word-display { color: #ecdbf2; }
   .tile.vowel-tile { box-shadow: inset 0 0 0 1.5px rgba(212,165,106,0.5); }
   .card-sub {
     font-size: 0.62rem; letter-spacing: 0.1em; color: var(--text-dim);
@@ -227,10 +234,18 @@
     <button id="btnVowels" class="vowels-btn" disabled>Autant de voyelles que de consonnes</button>
   </div>
   <div id="vowelsStatus"></div>
+
+  <div id="minLenControls" style="margin-top:18px;">
+    <label for="minLenSelect">À partir de :</label>
+    <select id="minLenSelect" disabled></select>
+    <button id="btnMinLen" class="minlen-btn" disabled>Lancer</button>
+  </div>
+  <div id="minLenStatus"></div>
 </header>
 
 <div id="feed"></div>
 <div id="digitsFeed"></div>
+<div id="minLenFeed"></div>
 
 <script>
 // ══════════════════════════════════════════════════════════
@@ -464,6 +479,59 @@ function startEngine(dictionary, wordsByLen) {
       setTimeout(vowelsLoop, 0);
     }
 
+    // ── Mode "À partir de N lettres" (aucun mot plus court que N) ──
+    // DFS qui s'arrête dès qu'un mot plus court que minLen est trouvé : la grille
+    // est aussitôt écartée, inutile de continuer à l'explorer.
+    function analyzeBoardMinLen(board, trie, minLen) {
+      const found = new Set();
+      let hasShort = false;
+      function dfs(idx, path, node, word) {
+        if (hasShort) return;
+        if (word.length >= 3 && node['$']) {
+          if (word.length < minLen) { hasShort = true; return; }
+          found.add(word);
+        }
+        for (const nb of ADJ[idx]) {
+          if (hasShort) return;
+          if (path.includes(nb)) continue;
+          const ch = board[nb];
+          if (!node[ch]) continue;
+          path.push(nb);
+          dfs(nb, path, node[ch], word + ch);
+          path.pop();
+        }
+      }
+      for (let i = 0; i < 16; i++) {
+        if (hasShort) break;
+        const ch = board[i];
+        if (!trie[ch]) continue;
+        dfs(i, [i], trie[ch], ch);
+      }
+      return { words: [...found], hasShort };
+    }
+
+    let minLenRunning = false;
+    let minLenTested = 0;
+    let minLenFound = 0;
+    let minLenTarget = 4;
+
+    function minLenLoop() {
+      if (!minLenRunning) return;
+      const BATCH = 40;
+      for (let k = 0; k < BATCH; k++) {
+        const board = randomBoard();
+        minLenTested++;
+        const { words, hasShort } = analyzeBoardMinLen(board, trie, minLenTarget);
+        if (!hasShort && words.length > 0) {
+          minLenFound++;
+          const { counts, maxLen } = lengthCounts(words);
+          self.postMessage({ type:'minLenGrid', board, counts, total: words.length, maxLen, words, minLen: minLenTarget });
+        }
+      }
+      self.postMessage({ type:'minLenProgress', tested: minLenTested, found: minLenFound });
+      setTimeout(minLenLoop, 0);
+    }
+
     let trie = null;
     let wordsByLen = {};
 
@@ -687,6 +755,17 @@ function startEngine(dictionary, wordsByLen) {
       } else if (e.data.type === 'vowelsResume') {
         vowelsRunning = true;
         vowelsLoop();
+      } else if (e.data.type === 'minlen') {
+        minLenTarget = e.data.minLen;
+        minLenFound = 0;
+        minLenTested = 0;
+        minLenRunning = true;
+        minLenLoop();
+      } else if (e.data.type === 'minlenPause') {
+        minLenRunning = false;
+      } else if (e.data.type === 'minlenResume') {
+        minLenRunning = true;
+        minLenLoop();
       }
     };
   `;
@@ -701,6 +780,18 @@ function startEngine(dictionary, wordsByLen) {
   const digitsStatusEl = document.getElementById('digitsStatus');
   const btnVowels = document.getElementById('btnVowels');
   const vowelsStatusEl = document.getElementById('vowelsStatus');
+  const minLenSelect = document.getElementById('minLenSelect');
+  const btnMinLen = document.getElementById('btnMinLen');
+  const minLenStatusEl = document.getElementById('minLenStatus');
+  const minLenFeedEl = document.getElementById('minLenFeed');
+
+  for (let n = 4; n <= 9; n++) {
+    const opt = document.createElement('option');
+    opt.value = n;
+    opt.textContent = `${n} lettres`;
+    minLenSelect.appendChild(opt);
+  }
+  minLenSelect.value = 4;
 
   const availableLens = Object.keys(wordsByLen).map(Number).filter(l => wordsByLen[l].length > 0).sort((a,b)=>a-b);
   availableLens.forEach(l => {
@@ -726,6 +817,12 @@ function startEngine(dictionary, wordsByLen) {
   let vowelsCount = 0;
   let vowelsTested = 0;
 
+  let minLenActive = false;
+  let minLenRunning = false;
+  let minLenTested = 0;
+  let minLenFound = 0;
+  let minLenChosen = 4;
+
   worker.onmessage = (e) => {
     if (e.data.type === 'ready') {
       reconStatusEl.textContent = 'Prêt — choisissez une longueur et lancez la recherche.';
@@ -735,6 +832,9 @@ function startEngine(dictionary, wordsByLen) {
       digitsStatusEl.textContent = 'Prêt à chercher.';
       btnVowels.disabled = false;
       vowelsStatusEl.textContent = 'Prêt à chercher.';
+      minLenSelect.disabled = false;
+      btnMinLen.disabled = false;
+      minLenStatusEl.textContent = 'Prêt à chercher.';
     } else if (e.data.type === 'reconGrid') {
       reconCount++;
       addCard(e.data, 'recon');
@@ -760,6 +860,14 @@ function startEngine(dictionary, wordsByLen) {
     } else if (e.data.type === 'vowelsProgress') {
       vowelsTested = e.data.tested;
       updateVowelsStatus();
+    } else if (e.data.type === 'minLenGrid') {
+      minLenFound++;
+      addCard(e.data, 'minlen');
+      updateMinLenStatus();
+    } else if (e.data.type === 'minLenProgress') {
+      minLenTested = e.data.tested;
+      minLenFound = e.data.found;
+      updateMinLenStatus();
     }
   };
 
@@ -776,6 +884,11 @@ function startEngine(dictionary, wordsByLen) {
   function updateVowelsStatus() {
     const txt = `<strong>${vowelsCount}</strong> grille${vowelsCount>1?'s':''} affichée${vowelsCount>1?'s':''} · ${vowelsTested.toLocaleString('fr-FR')} testée${vowelsTested>1?'s':''}`;
     vowelsStatusEl.innerHTML = txt;
+  }
+
+  function updateMinLenStatus() {
+    const txt = `<strong>${minLenFound}</strong> grille${minLenFound>1?'s':''} affichée${minLenFound>1?'s':''} (≥ ${minLenChosen} lettres) · ${minLenTested.toLocaleString('fr-FR')} testée${minLenTested>1?'s':''}`;
+    minLenStatusEl.innerHTML = txt;
   }
 
   function resetVowelsSearch() {
@@ -799,6 +912,40 @@ function startEngine(dictionary, wordsByLen) {
       vowelsRunning = !vowelsRunning;
       worker.postMessage({ type: vowelsRunning ? 'vowelsResume' : 'vowelsPause' });
       btnVowels.textContent = vowelsRunning ? 'Pause' : 'Reprendre';
+    }
+  });
+
+  function resetMinLenSearch() {
+    minLenActive = false;
+    minLenRunning = false;
+    minLenTested = 0;
+    minLenFound = 0;
+    btnMinLen.textContent = 'Lancer';
+    minLenStatusEl.textContent = 'Prêt à chercher.';
+  }
+
+  minLenSelect.addEventListener('change', () => {
+    if (minLenActive) {
+      if (minLenRunning) worker.postMessage({ type: 'minlenPause' });
+      resetMinLenSearch();
+    }
+  });
+
+  btnMinLen.addEventListener('click', () => {
+    if (!minLenActive) {
+      minLenChosen = Number(minLenSelect.value);
+      minLenActive = true;
+      minLenRunning = true;
+      minLenTested = 0;
+      minLenFound = 0;
+      minLenSelect.disabled = true;
+      worker.postMessage({ type: 'minlen', minLen: minLenChosen });
+      btnMinLen.textContent = 'Pause';
+    } else {
+      minLenRunning = !minLenRunning;
+      minLenSelect.disabled = minLenRunning;
+      worker.postMessage({ type: minLenRunning ? 'minlenResume' : 'minlenPause' });
+      btnMinLen.textContent = minLenRunning ? 'Pause' : 'Reprendre';
     }
   });
 
@@ -889,7 +1036,7 @@ function startEngine(dictionary, wordsByLen) {
 
   function addCard(data, kind) {
     const card = document.createElement('div');
-    card.className = 'card' + (kind === 'recon' ? ' recon' : '') + (kind === 'digits' ? ' digits' : '') + (kind === 'vowels' ? ' vowels' : '');
+    card.className = 'card' + (kind === 'recon' ? ' recon' : '') + (kind === 'digits' ? ' digits' : '') + (kind === 'vowels' ? ' vowels' : '') + (kind === 'minlen' ? ' minlen' : '');
 
     const head = document.createElement('div');
     head.className = 'card-head';
@@ -897,6 +1044,7 @@ function startEngine(dictionary, wordsByLen) {
     badge.className = 'card-badge';
     if (kind === 'digits') badge.textContent = `${data.digitCount} chiffre${data.digitCount>1?'s':''} sur 10`;
     else if (kind === 'vowels') badge.textContent = '8 voyelles / 8 consonnes';
+    else if (kind === 'minlen') badge.textContent = `À partir de ${data.minLen} lettres`;
     else badge.textContent = `Rétroconstruction — mot de ${data.targetLen} lettres`;
     head.appendChild(badge);
     const sub = document.createElement('div');
@@ -904,8 +1052,6 @@ function startEngine(dictionary, wordsByLen) {
     if (kind === 'digits') {
       const found = data.digits.map(d => d.word).join(', ');
       sub.textContent = `${data.total} mots trouvables (< 20) · chiffres : ${found}`;
-    } else if (kind === 'vowels') {
-      sub.textContent = `${data.total} mots trouvables · plus long mot : ${data.maxLen} lettres`;
     } else {
       sub.textContent = `${data.total} mots trouvables · plus long mot : ${data.maxLen} lettres`;
     }
@@ -973,8 +1119,8 @@ function startEngine(dictionary, wordsByLen) {
       wordEl.style.display = word ? '' : 'none';
     }
 
-    const defaultPath = (kind === 'digits' || kind === 'vowels') ? null : data.path;
-    const defaultWord = (kind === 'digits' || kind === 'vowels') ? null : data.longest;
+    const defaultPath = (kind === 'digits' || kind === 'vowels' || kind === 'minlen') ? null : data.path;
+    const defaultWord = (kind === 'digits' || kind === 'vowels' || kind === 'minlen') ? null : data.longest;
     renderPath(defaultPath, defaultWord);
 
     card.appendChild(gridWrap);
@@ -1000,7 +1146,7 @@ function startEngine(dictionary, wordsByLen) {
     }
 
     let wordsListEl = null;
-    if ((kind === 'recon' || kind === 'digits' || kind === 'vowels') && data.words && data.words.length) {
+    if ((kind === 'recon' || kind === 'digits' || kind === 'vowels' || kind === 'minlen') && data.words && data.words.length) {
       gridWrap.classList.add('clickable');
       wordsListEl = document.createElement('div');
       wordsListEl.className = 'word-list';
@@ -1057,6 +1203,8 @@ function startEngine(dictionary, wordsByLen) {
       const next = siblings.find(c => Number(c.dataset.digitCount) < data.digitCount);
       if (next) digitsFeedEl.insertBefore(card, next);
       else digitsFeedEl.appendChild(card);
+    } else if (kind === 'minlen') {
+      minLenFeedEl.appendChild(card);
     } else {
       feedEl.appendChild(card);
     }
