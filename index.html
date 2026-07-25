@@ -12,7 +12,7 @@
     --bg:#0d0d0f; --surface:#16161a; --surface2:#1e1e24;
     --border:#2a2a35; --gold:#c8a96e; --gold-light:#e8c98e;
     --cream:#f0e8d8; --text:#d8d0c8; --text-dim:#8a8578;
-    --tile-bg:#1a1a22; --tile-border:#30304a; --recon:#7a9ec4; --digits:#8ec49a;
+    --tile-bg:#1a1a22; --tile-border:#30304a; --recon:#7a9ec4; --digits:#8ec49a; --vowels:#d4a56a;
   }
   * { margin:0; padding:0; box-sizing:border-box; }
   body {
@@ -59,6 +59,8 @@
   button.recon-btn:hover { background: rgba(122,158,196,0.1); }
   button.digits-btn { border-color: var(--digits); color: var(--digits); }
   button.digits-btn:hover { background: rgba(142,196,154,0.1); }
+  button.vowels-btn { border-color: var(--vowels); color: var(--vowels); }
+  button.vowels-btn:hover { background: rgba(212,165,106,0.1); }
   button:hover { background: rgba(200,169,110,0.1); }
   button:disabled { opacity: 0.4; cursor: default; }
 
@@ -92,6 +94,12 @@
   .card.digits .tile.in-path { border-color: var(--digits); color: #d9f0dd; }
   .card.digits .tile .order-badge { color: var(--digits); }
   .card.digits .word-display { color: #d9f0dd; }
+  .card.vowels .card-badge { background: var(--vowels); }
+  .card.vowels .path-svg path { stroke: var(--vowels); filter: drop-shadow(0 0 4px rgba(212,165,106,.6)); }
+  .card.vowels .tile.in-path { border-color: var(--vowels); color: #f2ddb8; }
+  .card.vowels .tile .order-badge { color: var(--vowels); }
+  .card.vowels .word-display { color: #f2ddb8; }
+  .tile.vowel-tile { box-shadow: inset 0 0 0 1.5px rgba(212,165,106,0.5); }
   .card-sub {
     font-size: 0.62rem; letter-spacing: 0.1em; color: var(--text-dim);
     text-transform: uppercase; margin-top: 2px;
@@ -214,6 +222,11 @@
     <button id="btnDigits" class="digits-btn" disabled>Maximiser les chiffres (0 à 9)</button>
   </div>
   <div id="digitsStatus"></div>
+
+  <div id="vowelsControls" style="margin-top:18px;">
+    <button id="btnVowels" class="vowels-btn" disabled>Autant de voyelles que de consonnes</button>
+  </div>
+  <div id="vowelsStatus"></div>
 </header>
 
 <div id="feed"></div>
@@ -415,6 +428,41 @@ function startEngine(dictionary, wordsByLen) {
       return dice.map(d=>d[Math.random()*d.length|0]);
     }
 
+    // ── Mode "Autant de voyelles que de consonnes" ─────────────
+    const VOWELS = ['A','E','I','O','U','Y'];
+    const CONSONANTS = ['B','C','D','F','G','H','J','K','L','M','N','P','Q','R','S','T','V','W','X','Z'];
+    function randomBalancedBoard() {
+      const roles = [];
+      for (let i = 0; i < 8; i++) roles.push(true);   // voyelle
+      for (let i = 0; i < 8; i++) roles.push(false);  // consonne
+      shuffle(roles);
+      return roles.map(isVowel => isVowel
+        ? VOWELS[Math.random()*VOWELS.length|0]
+        : CONSONANTS[Math.random()*CONSONANTS.length|0]);
+    }
+
+    let vowelsRunning = false;
+    let vowelsTested = 0;
+    let vowelsBestTotal = null;
+
+    function vowelsLoop() {
+      if (!vowelsRunning) return;
+      const BATCH = 40;
+      for (let k = 0; k < BATCH; k++) {
+        const board = randomBalancedBoard();
+        vowelsTested++;
+        const { words } = analyzeBoardCapped(board, trie, Infinity);
+        const isFirst = vowelsBestTotal === null;
+        if (isFirst || words.length < vowelsBestTotal) {
+          vowelsBestTotal = words.length;
+          const { counts, maxLen } = lengthCounts(words);
+          self.postMessage({ type:'vowelsGrid', board, counts, total: words.length, maxLen, words });
+        }
+      }
+      self.postMessage({ type:'vowelsProgress', tested: vowelsTested });
+      setTimeout(vowelsLoop, 0);
+    }
+
     let trie = null;
     let wordsByLen = {};
 
@@ -603,6 +651,16 @@ function startEngine(dictionary, wordsByLen) {
       } else if (e.data.type === 'digitsResume') {
         digitsRunning = true;
         digitsLoop();
+      } else if (e.data.type === 'vowels') {
+        vowelsBestTotal = null;
+        vowelsTested = 0;
+        vowelsRunning = true;
+        vowelsLoop();
+      } else if (e.data.type === 'vowelsPause') {
+        vowelsRunning = false;
+      } else if (e.data.type === 'vowelsResume') {
+        vowelsRunning = true;
+        vowelsLoop();
       }
     };
   `;
@@ -614,6 +672,8 @@ function startEngine(dictionary, wordsByLen) {
   const lenSelect = document.getElementById('lenSelect');
   const btnDigits = document.getElementById('btnDigits');
   const digitsStatusEl = document.getElementById('digitsStatus');
+  const btnVowels = document.getElementById('btnVowels');
+  const vowelsStatusEl = document.getElementById('vowelsStatus');
 
   const availableLens = Object.keys(wordsByLen).map(Number).filter(l => wordsByLen[l].length > 0).sort((a,b)=>a-b);
   availableLens.forEach(l => {
@@ -634,6 +694,11 @@ function startEngine(dictionary, wordsByLen) {
   let digitsTested = 0;
   let digitsBest = -1;
 
+  let vowelsActive = false;
+  let vowelsRunning = false;
+  let vowelsCount = 0;
+  let vowelsTested = 0;
+
   worker.onmessage = (e) => {
     if (e.data.type === 'ready') {
       reconStatusEl.textContent = 'Prêt — choisissez une longueur et lancez la recherche.';
@@ -641,6 +706,8 @@ function startEngine(dictionary, wordsByLen) {
       btnReconstruct.disabled = false;
       btnDigits.disabled = false;
       digitsStatusEl.textContent = 'Prêt à chercher.';
+      btnVowels.disabled = false;
+      vowelsStatusEl.textContent = 'Prêt à chercher.';
     } else if (e.data.type === 'reconGrid') {
       reconCount++;
       addCard(e.data, 'recon');
@@ -657,6 +724,13 @@ function startEngine(dictionary, wordsByLen) {
     } else if (e.data.type === 'digitsProgress') {
       digitsTested = e.data.tested;
       updateDigitsStatus();
+    } else if (e.data.type === 'vowelsGrid') {
+      vowelsCount++;
+      addCard(e.data, 'vowels');
+      updateVowelsStatus();
+    } else if (e.data.type === 'vowelsProgress') {
+      vowelsTested = e.data.tested;
+      updateVowelsStatus();
     }
   };
 
@@ -670,6 +744,35 @@ function startEngine(dictionary, wordsByLen) {
     if (digitsBest >= 0) txt += ` · meilleur score : <strong>${digitsBest}</strong> / 10 chiffres`;
     digitsStatusEl.innerHTML = txt;
   }
+
+  function updateVowelsStatus() {
+    const txt = `<strong>${vowelsCount}</strong> grille${vowelsCount>1?'s':''} affichée${vowelsCount>1?'s':''} · ${vowelsTested.toLocaleString('fr-FR')} testée${vowelsTested>1?'s':''}`;
+    vowelsStatusEl.innerHTML = txt;
+  }
+
+  function resetVowelsSearch() {
+    vowelsActive = false;
+    vowelsRunning = false;
+    vowelsCount = 0;
+    vowelsTested = 0;
+    btnVowels.textContent = 'Autant de voyelles que de consonnes';
+    vowelsStatusEl.textContent = 'Prêt à chercher.';
+  }
+
+  btnVowels.addEventListener('click', () => {
+    if (!vowelsActive) {
+      vowelsActive = true;
+      vowelsRunning = true;
+      vowelsCount = 0;
+      vowelsTested = 0;
+      worker.postMessage({ type: 'vowels' });
+      btnVowels.textContent = 'Pause';
+    } else {
+      vowelsRunning = !vowelsRunning;
+      worker.postMessage({ type: vowelsRunning ? 'vowelsResume' : 'vowelsPause' });
+      btnVowels.textContent = vowelsRunning ? 'Pause' : 'Reprendre';
+    }
+  });
 
   function resetSearch() {
     reconActive = false;
@@ -729,15 +832,18 @@ function startEngine(dictionary, wordsByLen) {
     }
   });
 
+  const VOWELS_CLIENT = ['A','E','I','O','U','Y'];
+
   function addCard(data, kind) {
     const card = document.createElement('div');
-    card.className = 'card' + (kind === 'recon' ? ' recon' : '') + (kind === 'digits' ? ' digits' : '');
+    card.className = 'card' + (kind === 'recon' ? ' recon' : '') + (kind === 'digits' ? ' digits' : '') + (kind === 'vowels' ? ' vowels' : '');
 
     const head = document.createElement('div');
     head.className = 'card-head';
     const badge = document.createElement('div');
     badge.className = 'card-badge';
     if (kind === 'digits') badge.textContent = `${data.digitCount} chiffre${data.digitCount>1?'s':''} sur 10`;
+    else if (kind === 'vowels') badge.textContent = '8 voyelles / 8 consonnes';
     else badge.textContent = `Rétroconstruction — mot de ${data.targetLen} lettres`;
     head.appendChild(badge);
     const sub = document.createElement('div');
@@ -745,6 +851,8 @@ function startEngine(dictionary, wordsByLen) {
     if (kind === 'digits') {
       const found = data.digits.map(d => d.word).join(', ');
       sub.textContent = `${data.total} mots trouvables (< 20) · chiffres : ${found}`;
+    } else if (kind === 'vowels') {
+      sub.textContent = `${data.total} mots trouvables · plus long mot : ${data.maxLen} lettres`;
     } else {
       sub.textContent = `${data.total} mots trouvables · plus long mot : ${data.maxLen} lettres`;
     }
@@ -759,7 +867,7 @@ function startEngine(dictionary, wordsByLen) {
     const tiles = [];
     data.board.forEach((letter, i) => {
       const t = document.createElement('div');
-      t.className = 'tile';
+      t.className = 'tile' + (kind === 'vowels' && VOWELS_CLIENT.includes(letter) ? ' vowel-tile' : '');
       t.textContent = letter;
       const badgeEl = document.createElement('span');
       badgeEl.className = 'order-badge';
@@ -812,8 +920,8 @@ function startEngine(dictionary, wordsByLen) {
       wordEl.style.display = word ? '' : 'none';
     }
 
-    const defaultPath = kind === 'digits' ? null : data.path;
-    const defaultWord = kind === 'digits' ? null : data.longest;
+    const defaultPath = (kind === 'digits' || kind === 'vowels') ? null : data.path;
+    const defaultWord = (kind === 'digits' || kind === 'vowels') ? null : data.longest;
     renderPath(defaultPath, defaultWord);
 
     card.appendChild(gridWrap);
@@ -839,7 +947,7 @@ function startEngine(dictionary, wordsByLen) {
     }
 
     let wordsListEl = null;
-    if ((kind === 'recon' || kind === 'digits') && data.words && data.words.length) {
+    if ((kind === 'recon' || kind === 'digits' || kind === 'vowels') && data.words && data.words.length) {
       gridWrap.classList.add('clickable');
       wordsListEl = document.createElement('div');
       wordsListEl.className = 'word-list';
