@@ -503,9 +503,9 @@ function startEngine(dictionary, wordsByLen) {
       return null;
     }
 
-    // Place un mot sur le plateau en réutilisant les cases déjà assignées si les lettres
-    // correspondent, sinon en assignant de nouvelles cases. Abandonne si le budget de pas
-    // est épuisé. Ne fait PAS marche arrière sur les mots déjà placés (placement glouton).
+    // Place un mot le long d'un chemin de cases adjacentes, en réutilisant les cases déjà
+    // assignées si les lettres correspondent, sinon en assignant de nouvelles cases.
+    // "newly" accumule les cases nouvellement assignées pour permettre l'annulation complète.
     function extendDigitPath(board, assigned, path, word, wi, budget, newly) {
       if (wi === word.length) return true;
       const last = path[path.length-1];
@@ -532,23 +532,6 @@ function startEngine(dictionary, wordsByLen) {
       return false;
     }
 
-    function tryPlaceDigitWord(board, assigned, word, budget) {
-      const starts = shuffle([...Array(16).keys()]);
-      for (const start of starts) {
-        if (budget.steps <= 0) return false;
-        const ch0 = word[0];
-        const wasAssigned = assigned[start];
-        if (wasAssigned && board[start] !== ch0) continue;
-        const newly = [];
-        if (!wasAssigned) { board[start] = ch0; assigned[start] = true; newly.push(start); }
-        const path = [start];
-        budget.steps--;
-        if (extendDigitPath(board, assigned, path, word, 1, budget, newly)) return true;
-        for (const cell of newly) { assigned[cell] = false; board[cell] = null; }
-      }
-      return false;
-    }
-
     // Remplissage des cases restantes : n'importe quelle lettre de l'alphabet, au hasard.
     const ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'.split('');
     function randomAnyLetterBoard() {
@@ -557,21 +540,58 @@ function startEngine(dictionary, wordsByLen) {
       return arr;
     }
 
-    // Construit une grille candidate en essayant de placer, dans un ordre aléatoire,
-    // le plus de mots-chiffres possible (placement glouton), puis remplit le reste
-    // avec des lettres quelconques (pas de dés).
+    // Construit une grille candidate par VRAI backtracking : essaie de placer chaque mot dans
+    // un ordre aléatoire, en revenant en arrière (annulation complète des cases assignées)
+    // si un mot ultérieur ne peut plus être casé — au lieu d'abandonner définitivement ce mot
+    // comme le ferait un placement glouton. Peut aussi choisir d'ignorer un mot pour tenter
+    // les suivants. Garde en mémoire la meilleure combinaison rencontrée (le plus de mots
+    // placés simultanément), même si l'exploration ne va pas jusqu'au bout des 10 mots.
     function buildDigitsCandidate() {
+      const order = shuffle(DIGIT_WORDS.slice());
       const board = new Array(16).fill(null);
       const assigned = new Array(16).fill(false);
-      const order = shuffle(DIGIT_WORDS.slice());
-      const budget = { steps: 1500 };
-      for (const word of order) {
-        if (budget.steps <= 0) break;
-        tryPlaceDigitWord(board, assigned, word, budget);
+      const budget = { steps: 4000 };
+      const paths = {};
+      let bestCount = 0, bestBoard = null, bestPaths = null;
+
+      function snapshot(count) {
+        if (count > bestCount) {
+          bestCount = count;
+          bestBoard = board.slice();
+          bestPaths = Object.assign({}, paths);
+        }
       }
+
+      function backtrack(idx, placedCount) {
+        snapshot(placedCount);
+        if (idx === order.length || budget.steps <= 0) return;
+        const word = order[idx];
+        const starts = shuffle([...Array(16).keys()]);
+        for (const start of starts) {
+          if (budget.steps <= 0) break;
+          const ch0 = word[0];
+          const wasAssigned = assigned[start];
+          if (wasAssigned && board[start] !== ch0) continue;
+          const newly = [];
+          if (!wasAssigned) { board[start] = ch0; assigned[start] = true; newly.push(start); }
+          const path = [start];
+          budget.steps--;
+          if (extendDigitPath(board, assigned, path, word, 1, budget, newly)) {
+            paths[word] = path.slice();
+            backtrack(idx + 1, placedCount + 1);
+            delete paths[word];
+          }
+          for (const cell of newly) { assigned[cell] = false; board[cell] = null; }
+        }
+        // essaie aussi de laisser ce mot de côté pour tenter de caser les suivants
+        if (budget.steps > 0) backtrack(idx + 1, placedCount);
+      }
+      backtrack(0, 0);
+
+      if (!bestBoard) { bestBoard = new Array(16).fill(null); bestPaths = {}; }
       const filler = randomAnyLetterBoard();
-      for (let i = 0; i < 16; i++) if (!assigned[i]) board[i] = filler[i];
-      return board;
+      const finalBoard = bestBoard.map((c, i) => c === null ? filler[i] : c);
+      return { board: finalBoard, digits: Object.keys(bestPaths).map(w => ({ word: w, path: bestPaths[w] })) };
     }
 
     let digitsRunning = false;
@@ -581,15 +601,10 @@ function startEngine(dictionary, wordsByLen) {
 
     function digitsLoop() {
       if (!digitsRunning) return;
-      const BATCH = 15;
+      const BATCH = 4;
       for (let k = 0; k < BATCH; k++) {
-        const board = buildDigitsCandidate();
+        const { board, digits } = buildDigitsCandidate();
         digitsTested++;
-        const digits = [];
-        for (const w of DIGIT_WORDS) {
-          const p = pathExists(board, w);
-          if (p) digits.push({ word: w, path: p });
-        }
         // n'affiche que les grilles avec au moins 8 chiffres sur 10 ; le classement
         // par nombre total de mots croissant est fait cote page (a l'affichage).
         if (digits.length >= DIGITS_MIN_COUNT) {
