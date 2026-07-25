@@ -219,7 +219,7 @@
   <div id="reconStatus">Préparation…</div>
 
   <div id="digitsControls" style="margin-top:18px;">
-    <button id="btnDigits" class="digits-btn" disabled>Maximiser les chiffres (0 à 9)</button>
+    <button id="btnDigits" class="digits-btn" disabled>Grilles avec ≥ 8 chiffres (0 à 9)</button>
   </div>
   <div id="digitsStatus"></div>
 
@@ -230,6 +230,7 @@
 </header>
 
 <div id="feed"></div>
+<div id="digitsFeed"></div>
 
 <script>
 // ══════════════════════════════════════════════════════════
@@ -575,7 +576,8 @@ function startEngine(dictionary, wordsByLen) {
 
     let digitsRunning = false;
     let digitsTested = 0;
-    let digitsBest = -1;
+    let digitsFound = 0;
+    const DIGITS_MIN_COUNT = 8;
 
     function digitsLoop() {
       if (!digitsRunning) return;
@@ -588,16 +590,16 @@ function startEngine(dictionary, wordsByLen) {
           const p = pathExists(board, w);
           if (p) digits.push({ word: w, path: p });
         }
-        // affiche toute grille avec autant ou plus de chiffres que la précédente affichée,
-        // sans se soucier du nombre total de mots de la grille
-        if (digits.length >= digitsBest) {
-          digitsBest = digits.length;
+        // n'affiche que les grilles avec au moins 8 chiffres sur 10 ; le classement
+        // par nombre total de mots croissant est fait cote page (a l'affichage).
+        if (digits.length >= DIGITS_MIN_COUNT) {
+          digitsFound++;
           const { words } = analyzeBoardCapped(board, trie, Infinity);
           const { counts, maxLen } = lengthCounts(words);
           self.postMessage({ type:'digitsGrid', board, counts, total: words.length, maxLen, words, digits, digitCount: digits.length });
         }
       }
-      self.postMessage({ type:'digitsProgress', tested: digitsTested, best: digitsBest });
+      self.postMessage({ type:'digitsProgress', tested: digitsTested, found: digitsFound });
       setTimeout(digitsLoop, 0);
     }
 
@@ -651,7 +653,7 @@ function startEngine(dictionary, wordsByLen) {
         reconRunning = true;
         reconLoop();
       } else if (e.data.type === 'digits') {
-        digitsBest = -1;
+        digitsFound = 0;
         digitsTested = 0;
         digitsRunning = true;
         digitsLoop();
@@ -676,6 +678,7 @@ function startEngine(dictionary, wordsByLen) {
   const worker = new Worker(URL.createObjectURL(new Blob([workerCode], {type:'application/javascript'})));
 
   const feedEl = document.getElementById('feed');
+  const digitsFeedEl = document.getElementById('digitsFeed');
   const btnReconstruct = document.getElementById('btnReconstruct');
   const reconStatusEl = document.getElementById('reconStatus');
   const lenSelect = document.getElementById('lenSelect');
@@ -701,7 +704,7 @@ function startEngine(dictionary, wordsByLen) {
   let digitsActive = false;
   let digitsRunning = false;
   let digitsTested = 0;
-  let digitsBest = -1;
+  let digitsFound = 0;
 
   let vowelsActive = false;
   let vowelsRunning = false;
@@ -727,11 +730,12 @@ function startEngine(dictionary, wordsByLen) {
     } else if (e.data.type === 'reconError') {
       reconStatusEl.textContent = e.data.message;
     } else if (e.data.type === 'digitsGrid') {
-      digitsBest = e.data.digitCount;
+      digitsFound++;
       addCard(e.data, 'digits');
       updateDigitsStatus();
     } else if (e.data.type === 'digitsProgress') {
       digitsTested = e.data.tested;
+      digitsFound = e.data.found;
       updateDigitsStatus();
     } else if (e.data.type === 'vowelsGrid') {
       vowelsCount++;
@@ -749,8 +753,7 @@ function startEngine(dictionary, wordsByLen) {
   }
 
   function updateDigitsStatus() {
-    let txt = `${digitsTested.toLocaleString('fr-FR')} grille${digitsTested>1?'s':''} testée${digitsTested>1?'s':''}`;
-    if (digitsBest >= 0) txt += ` · meilleur score : <strong>${digitsBest}</strong> / 10 chiffres`;
+    const txt = `<strong>${digitsFound}</strong> grille${digitsFound>1?'s':''} affichée${digitsFound>1?'s':''} (≥ 8 chiffres) · ${digitsTested.toLocaleString('fr-FR')} testée${digitsTested>1?'s':''}`;
     digitsStatusEl.innerHTML = txt;
   }
 
@@ -796,8 +799,8 @@ function startEngine(dictionary, wordsByLen) {
     digitsActive = false;
     digitsRunning = false;
     digitsTested = 0;
-    digitsBest = -1;
-    btnDigits.textContent = 'Maximiser les chiffres (0 à 9)';
+    digitsFound = 0;
+    btnDigits.textContent = 'Grilles avec ≥ 8 chiffres (0 à 9)';
     digitsStatusEl.textContent = 'Prêt à chercher.';
   }
 
@@ -806,7 +809,7 @@ function startEngine(dictionary, wordsByLen) {
       digitsActive = true;
       digitsRunning = true;
       digitsTested = 0;
-      digitsBest = -1;
+      digitsFound = 0;
       worker.postMessage({ type: 'digits' });
       btnDigits.textContent = 'Pause';
     } else {
@@ -1005,7 +1008,15 @@ function startEngine(dictionary, wordsByLen) {
     table.appendChild(bodyRow);
     card.appendChild(table);
 
-    feedEl.appendChild(card);
+    if (kind === 'digits') {
+      card.dataset.total = data.total;
+      const siblings = [...digitsFeedEl.children];
+      const next = siblings.find(c => Number(c.dataset.total) > data.total);
+      if (next) digitsFeedEl.insertBefore(card, next);
+      else digitsFeedEl.appendChild(card);
+    } else {
+      feedEl.appendChild(card);
+    }
   }
 
   worker.postMessage({ type: 'build', words: [...dictionary], wordsByLen });
