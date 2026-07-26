@@ -236,7 +236,7 @@
   <div id="vowelsStatus"></div>
 
   <div id="fewWordsControls" style="margin-top:18px;">
-    <button id="btnFewWords" class="fewwords-btn" disabled>Peu de mots (≥5 voyelles / ≥5 consonnes)</button>
+    <button id="btnFewWords" class="fewwords-btn" disabled>Peu de mots (5 mots, ≥4 voyelles / ≥5 consonnes différentes)</button>
   </div>
   <div id="fewWordsStatus"></div>
 </header>
@@ -446,13 +446,19 @@ function startEngine(dictionary, wordsByLen) {
     const VOWELS = ['A','E','I','O','U','Y'];
     const CONSONANTS = ['B','C','D','F','G','H','J','K','L','M','N','P','Q','R','S','T','V','W','X','Z'];
     function randomBalancedBoard() {
+      const dice = [...FRENCH_DICE_W];
+      for (let i = dice.length-1; i > 0; i--) { const j = Math.random()*(i+1)|0; [dice[i],dice[j]] = [dice[j],dice[i]]; }
       const roles = [];
-      for (let i = 0; i < 8; i++) roles.push(true);   // voyelle
-      for (let i = 0; i < 8; i++) roles.push(false);  // consonne
+      for (let i = 0; i < 8; i++) roles.push('V');   // voyelle
+      for (let i = 0; i < 8; i++) roles.push('C');   // consonne
       shuffle(roles);
-      return roles.map(isVowel => isVowel
-        ? VOWELS[Math.random()*VOWELS.length|0]
-        : CONSONANTS[Math.random()*CONSONANTS.length|0]);
+      return dice.map((d, i) => {
+        const role = roles[i];
+        let faces = d.split('');
+        faces = role === 'V' ? faces.filter(ch => VOWELS.includes(ch)) : faces.filter(ch => !VOWELS.includes(ch));
+        if (!faces.length) faces = d.split('');
+        return faces[Math.random()*faces.length|0];
+      });
     }
 
     let vowelsRunning = false;
@@ -477,7 +483,7 @@ function startEngine(dictionary, wordsByLen) {
       setTimeout(vowelsLoop, 0);
     }
 
-    // ── Mode "Peu de mots" (≥5 voyelles et ≥5 consonnes) ──
+    // ── Mode "Peu de mots" (exactement 5 mots, ≥4 voyelles différentes, ≥5 consonnes différentes sur la grille) ──
     // Utilise les vrais dés français : on mélange les 16 dés, on assigne 5 rôles
     // "voyelle", 5 rôles "consonne" et 6 rôles libres, puis pour chaque dé on ne
     // tire que parmi ses faces compatibles avec le rôle assigné (repli sur toutes
@@ -502,20 +508,29 @@ function startEngine(dictionary, wordsByLen) {
 
     let fewWordsRunning = false;
     let fewWordsTested = 0;
-    let fewWordsBestTotal = null;
+
+    function boardLetterDiversity(board) {
+      const vowelSet = new Set();
+      const consSet = new Set();
+      for (const ch of board) {
+        if (VOWELS.includes(ch)) vowelSet.add(ch); else consSet.add(ch);
+      }
+      return { vowelCount: vowelSet.size, consCount: consSet.size };
+    }
 
     function fewWordsLoop() {
       if (!fewWordsRunning) return;
-      const BATCH = 40;
+      const BATCH = 100;
       for (let k = 0; k < BATCH; k++) {
         const board = randomFewWordsBoard();
         fewWordsTested++;
         const { words } = analyzeBoardCapped(board, trie, Infinity);
-        const isFirst = fewWordsBestTotal === null;
-        if (isFirst || words.length < fewWordsBestTotal) {
-          fewWordsBestTotal = words.length;
-          const { counts, maxLen } = lengthCounts(words);
-          self.postMessage({ type:'fewWordsGrid', board, counts, total: words.length, maxLen, words });
+        if (words.length === 5) {
+          const { vowelCount, consCount } = boardLetterDiversity(board);
+          if (vowelCount >= 4 && consCount >= 5) {
+            const { counts, maxLen } = lengthCounts(words);
+            self.postMessage({ type:'fewWordsGrid', board, counts, total: words.length, maxLen, words });
+          }
         }
       }
       self.postMessage({ type:'fewWordsProgress', tested: fewWordsTested });
@@ -746,7 +761,6 @@ function startEngine(dictionary, wordsByLen) {
         vowelsRunning = true;
         vowelsLoop();
       } else if (e.data.type === 'fewwords') {
-        fewWordsBestTotal = null;
         fewWordsTested = 0;
         fewWordsRunning = true;
         fewWordsLoop();
@@ -1002,7 +1016,7 @@ function startEngine(dictionary, wordsByLen) {
     badge.className = 'card-badge';
     if (kind === 'digits') badge.textContent = `${data.digitCount} chiffre${data.digitCount>1?'s':''} sur 10`;
     else if (kind === 'vowels') badge.textContent = '8 voyelles / 8 consonnes';
-    else if (kind === 'fewwords') badge.textContent = 'Peu de mots — ≥5 voyelles / ≥5 consonnes';
+    else if (kind === 'fewwords') badge.textContent = '5 mots — ≥4 voyelles / ≥5 consonnes différentes';
     else badge.textContent = `Rétroconstruction — mot de ${data.targetLen} lettres`;
     head.appendChild(badge);
     const sub = document.createElement('div');
