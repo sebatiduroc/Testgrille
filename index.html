@@ -1122,8 +1122,8 @@ function startEngine(dictionary, wordsByLen) {
       wordEl.style.display = word ? '' : 'none';
     }
 
-    const defaultPath = (kind === 'digits' || kind === 'vowels' || kind === 'fewwords') ? null : data.path;
-    const defaultWord = (kind === 'digits' || kind === 'vowels' || kind === 'fewwords') ? null : data.longest;
+    const defaultPath = null;
+    const defaultWord = null;
     renderPath(defaultPath, defaultWord);
 
     card.appendChild(gridWrap);
