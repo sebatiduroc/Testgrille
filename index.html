@@ -48,6 +48,13 @@
     border: 1.5px solid var(--recon); background: var(--surface); color: var(--recon);
   }
   select:disabled { opacity: 0.4; }
+  input[type="number"] {
+    font-family: 'DM Mono', monospace; font-size: 0.7rem;
+    letter-spacing: 0.08em;
+    padding: 8px 10px; border-radius: 10px; width: 72px;
+    border: 1.5px solid var(--recon); background: var(--surface); color: var(--recon);
+  }
+  input[type="number"]:disabled { opacity: 0.4; }
   button {
     font-family: 'DM Mono', monospace; font-size: 0.7rem;
     letter-spacing: 0.12em; text-transform: uppercase;
@@ -221,6 +228,8 @@
   <div id="controls">
     <label for="lenSelect">Longueur du mot le plus long :</label>
     <select id="lenSelect" disabled></select>
+    <label for="maxWordsInput">Nombre de mots max (-1 = illimité) :</label>
+    <input type="number" id="maxWordsInput" value="21" step="1" disabled>
     <button id="btnReconstruct" class="recon-btn" disabled>Lancer</button>
   </div>
   <div id="reconStatus">Préparation…</div>
@@ -695,7 +704,7 @@ function startEngine(dictionary, wordsByLen) {
     let reconTested = 0;
     let reconFound = 0;
     let reconTargetLen = null;
-    const MAX_WORDS = 21;
+    let reconMaxWords = 21;
 
     function reconLoop() {
       if (!reconRunning) return;
@@ -712,13 +721,13 @@ function startEngine(dictionary, wordsByLen) {
         if (!path) continue;
         const board = randomBoard();
         for (let i = 0; i < path.length; i++) board[path[i]] = word[i];
-        const { words, overflow } = analyzeBoardCapped(board, trie, MAX_WORDS);
+        const { words, overflow } = analyzeBoardCapped(board, trie, reconMaxWords);
         reconTested++;
-        if (overflow) continue; // 22e mot trouvé : on abandonne cette grille sans aller plus loin
+        if (overflow) continue; // trop de mots trouvés : on abandonne cette grille sans aller plus loin
         const { counts, maxLen } = lengthCounts(words);
         if (maxLen > reconTargetLen) continue; // un mot plus long que voulu existe : on rejette cette grille
         reconFound++;
-        self.postMessage({ type:'reconGrid', board, counts, total: words.length, maxLen, longest: word, path, words, targetLen: reconTargetLen });
+        self.postMessage({ type:'reconGrid', board, counts, total: words.length, maxLen, longest: word, path, words, targetLen: reconTargetLen, maxWords: reconMaxWords });
       }
       self.postMessage({ type:'reconProgress', tested: reconTested });
       setTimeout(reconLoop, 0);
@@ -731,6 +740,7 @@ function startEngine(dictionary, wordsByLen) {
         self.postMessage({ type:'ready' });
       } else if (e.data.type === 'reconstruct') {
         reconTargetLen = e.data.targetLen;
+        reconMaxWords = (e.data.maxWords === -1 || e.data.maxWords == null || isNaN(e.data.maxWords)) ? Infinity : e.data.maxWords;
         reconFound = 0;
         reconTested = 0;
         reconRunning = true;
@@ -779,6 +789,7 @@ function startEngine(dictionary, wordsByLen) {
   const btnReconstruct = document.getElementById('btnReconstruct');
   const reconStatusEl = document.getElementById('reconStatus');
   const lenSelect = document.getElementById('lenSelect');
+  const maxWordsInput = document.getElementById('maxWordsInput');
   const btnDigits = document.getElementById('btnDigits');
   const digitsStatusEl = document.getElementById('digitsStatus');
   const btnVowels = document.getElementById('btnVowels');
@@ -800,6 +811,7 @@ function startEngine(dictionary, wordsByLen) {
   let reconTested = 0;
   let reconActive = false;
   let reconRunning = false;
+  let reconCurrentMaxWords = 21;
 
   let digitsActive = false;
   let digitsRunning = false;
@@ -820,6 +832,7 @@ function startEngine(dictionary, wordsByLen) {
     if (e.data.type === 'ready') {
       reconStatusEl.textContent = 'Prêt — choisissez une longueur et lancez la recherche.';
       lenSelect.disabled = false;
+      maxWordsInput.disabled = false;
       btnReconstruct.disabled = false;
       btnDigits.disabled = false;
       digitsStatusEl.textContent = 'Prêt à chercher.';
@@ -863,7 +876,8 @@ function startEngine(dictionary, wordsByLen) {
   };
 
   function updateReconStatus() {
-    const txt = `<strong>${reconCount}</strong> grille${reconCount>1?'s':''} affichée${reconCount>1?'s':''} (≤ 21 mots) · ${reconTested.toLocaleString('fr-FR')} testée${reconTested>1?'s':''}`;
+    const capTxt = reconCurrentMaxWords === Infinity ? 'illimité' : `≤ ${reconCurrentMaxWords} mots`;
+    const txt = `<strong>${reconCount}</strong> grille${reconCount>1?'s':''} affichée${reconCount>1?'s':''} (${capTxt}) · ${reconTested.toLocaleString('fr-FR')} testée${reconTested>1?'s':''}`;
     reconStatusEl.innerHTML = txt;
   }
 
@@ -926,6 +940,8 @@ function startEngine(dictionary, wordsByLen) {
     reconRunning = false;
     reconCount = 0;
     reconTested = 0;
+    lenSelect.disabled = false;
+    maxWordsInput.disabled = false;
     btnReconstruct.textContent = 'Lancer';
     reconStatusEl.textContent = 'Prêt — choisissez une longueur et lancez la recherche.';
   }
@@ -961,19 +977,31 @@ function startEngine(dictionary, wordsByLen) {
     }
   });
 
+  maxWordsInput.addEventListener('change', () => {
+    if (reconActive) {
+      if (reconRunning) worker.postMessage({ type: 'reconPause' });
+      resetSearch();
+    }
+  });
+
   btnReconstruct.addEventListener('click', () => {
     if (!reconActive) {
       const targetLen = Number(lenSelect.value);
+      const rawMaxWords = Number(maxWordsInput.value);
+      const maxWords = (isNaN(rawMaxWords) || rawMaxWords === -1) ? -1 : rawMaxWords;
+      reconCurrentMaxWords = maxWords === -1 ? Infinity : maxWords;
       reconActive = true;
       reconRunning = true;
       reconCount = 0;
       reconTested = 0;
       lenSelect.disabled = true;
-      worker.postMessage({ type: 'reconstruct', targetLen });
+      maxWordsInput.disabled = true;
+      worker.postMessage({ type: 'reconstruct', targetLen, maxWords });
       btnReconstruct.textContent = 'Pause';
     } else {
       reconRunning = !reconRunning;
       lenSelect.disabled = reconRunning;
+      maxWordsInput.disabled = reconRunning;
       worker.postMessage({ type: reconRunning ? 'reconResume' : 'reconPause' });
       btnReconstruct.textContent = reconRunning ? 'Pause' : 'Reprendre';
     }
@@ -1024,6 +1052,9 @@ function startEngine(dictionary, wordsByLen) {
     if (kind === 'digits') {
       const found = data.digits.map(d => d.word).join(', ');
       sub.textContent = `${data.total} mots trouvables (< 20) · chiffres : ${found}`;
+    } else if (kind === 'recon') {
+      const capTxt = (data.maxWords === undefined || data.maxWords === Infinity) ? 'illimité' : `≤ ${data.maxWords}`;
+      sub.textContent = `${data.total} mots trouvables (${capTxt}) · plus long mot : ${data.maxLen} lettres`;
     } else {
       sub.textContent = `${data.total} mots trouvables · plus long mot : ${data.maxLen} lettres`;
     }
