@@ -12,7 +12,7 @@
     --bg:#0d0d0f; --surface:#16161a; --surface2:#1e1e24;
     --border:#2a2a35; --gold:#c8a96e; --gold-light:#e8c98e;
     --cream:#f0e8d8; --text:#d8d0c8; --text-dim:#8a8578;
-    --tile-bg:#1a1a22; --tile-border:#30304a; --recon:#7a9ec4; --digits:#8ec49a; --vowels:#d4a56a; --fewwords:#b57ac4;
+    --tile-bg:#1a1a22; --tile-border:#30304a; --recon:#7a9ec4; --digits:#8ec49a; --vowels:#d4a56a; --fewwords:#b57ac4; --record:#c46a7a;
   }
   * { margin:0; padding:0; box-sizing:border-box; }
   body {
@@ -70,6 +70,8 @@
   button.vowels-btn:hover { background: rgba(212,165,106,0.1); }
   button.fewwords-btn { border-color: var(--fewwords); color: var(--fewwords); }
   button.fewwords-btn:hover { background: rgba(181,122,196,0.1); }
+  button.record-btn { border-color: var(--record); color: var(--record); }
+  button.record-btn:hover { background: rgba(196,106,122,0.1); }
   button:hover { background: rgba(200,169,110,0.1); }
   button:disabled { opacity: 0.4; cursor: default; }
 
@@ -113,6 +115,11 @@
   .card.fewwords .tile.in-path { border-color: var(--fewwords); color: #ecdbf2; }
   .card.fewwords .tile .order-badge { color: var(--fewwords); }
   .card.fewwords .word-display { color: #ecdbf2; }
+  .card.record .card-badge { background: var(--record); }
+  .card.record .path-svg path { stroke: var(--record); filter: drop-shadow(0 0 4px rgba(196,106,122,.6)); }
+  .card.record .tile.in-path { border-color: var(--record); color: #f2d8dc; }
+  .card.record .tile .order-badge { color: var(--record); }
+  .card.record .word-display { color: #f2d8dc; }
   .tile.vowel-tile { box-shadow: inset 0 0 0 1.5px rgba(212,165,106,0.5); }
   .card-sub {
     font-size: 0.62rem; letter-spacing: 0.1em; color: var(--text-dim);
@@ -186,6 +193,24 @@
     background: rgba(142,196,154,0.3); font-weight: 500;
   }
 
+  .record-options {
+    display: flex; justify-content: center; gap: 18px; flex-wrap: wrap; margin-bottom: 10px;
+  }
+  .record-options fieldset {
+    border: 1.5px solid var(--record); border-radius: 10px; padding: 6px 12px;
+    display: flex; gap: 12px;
+  }
+  .record-options legend {
+    font-size: 0.6rem; letter-spacing: 0.1em; color: var(--record); text-transform: uppercase; padding: 0 4px;
+  }
+  .record-options label {
+    font-size: 0.68rem; letter-spacing: 0.06em; color: var(--text); text-transform: uppercase;
+    display: flex; align-items: center; gap: 5px; cursor: pointer;
+  }
+  .record-options input[type="radio"] { accent-color: var(--record); cursor: pointer; }
+  .record-options input[type="radio"]:disabled { cursor: default; }
+  .record-options fieldset:has(input:disabled) { opacity: 0.5; }
+
   table.len-table {
     border-collapse: collapse; font-size: 0.72rem; width: 100%; max-width: 380px;
   }
@@ -248,11 +273,29 @@
     <button id="btnFewWords" class="fewwords-btn" disabled>Peu de mots (5 mots, ≥4 voyelles / ≥5 consonnes différentes)</button>
   </div>
   <div id="fewWordsStatus"></div>
+
+  <div id="recordControls" style="margin-top:18px;">
+    <div class="record-options">
+      <fieldset>
+        <legend>Dés</legend>
+        <label><input type="radio" name="recordDice" value="game" checked> Dés du jeu</label>
+        <label><input type="radio" name="recordDice" value="free"> Dés libres</label>
+      </fieldset>
+      <fieldset>
+        <legend>Record</legend>
+        <label><input type="radio" name="recordScore" value="words" checked> De mots</label>
+        <label><input type="radio" name="recordScore" value="points"> De points</label>
+      </fieldset>
+    </div>
+    <button id="btnRecord" class="record-btn" disabled>Lancer</button>
+  </div>
+  <div id="recordStatus"></div>
 </header>
 
 <div id="feed"></div>
 <div id="digitsFeed"></div>
 <div id="fewWordsFeed"></div>
+<div id="recordFeed"></div>
 
 <script>
 // ══════════════════════════════════════════════════════════
@@ -546,6 +589,49 @@ function startEngine(dictionary, wordsByLen) {
       setTimeout(fewWordsLoop, 0);
     }
 
+    // ── Mode "Grille record" ────────────────────────────────────
+    // "Dés du jeu" réutilise randomBoard() (tirage sur les 16 vrais dés français).
+    // "Dés libres" réutilise randomAnyLetterBoard() (chaque case tirée indépendamment
+    // dans tout l'alphabet, sans la contrainte des combinaisons de dés du jeu).
+
+    // Barème de points façon Boggle classique : 3-4 lettres = 1pt, 5 = 2pts,
+    // 6 = 3pts, 7 = 5pts, 8 lettres ou plus = 11pts. À ajuster si le barème
+    // réel de Mots-Lierre diffère.
+    const RECORD_POINTS = { 3:1, 4:1, 5:2, 6:3, 7:5 };
+    function wordPoints(len) { return len >= 8 ? 11 : (RECORD_POINTS[len] || 0); }
+    function scoreWords(words, scoreMode) {
+      if (scoreMode === 'points') {
+        let total = 0;
+        for (const w of words) total += wordPoints(w.length);
+        return total;
+      }
+      return words.length;
+    }
+
+    let recordRunning = false;
+    let recordTested = 0;
+    let recordBest = null;
+    let recordDiceMode = 'game';
+    let recordScoreMode = 'words';
+
+    function recordLoop() {
+      if (!recordRunning) return;
+      const BATCH = 30;
+      for (let k = 0; k < BATCH; k++) {
+        const board = recordDiceMode === 'free' ? randomAnyLetterBoard() : randomBoard();
+        recordTested++;
+        const { words } = analyzeBoardCapped(board, trie, Infinity);
+        const value = scoreWords(words, recordScoreMode);
+        if (recordBest === null || value > recordBest) {
+          recordBest = value;
+          const { counts, maxLen } = lengthCounts(words);
+          self.postMessage({ type:'recordGrid', board, counts, total: words.length, maxLen, words, value, diceMode: recordDiceMode, scoreMode: recordScoreMode });
+        }
+      }
+      self.postMessage({ type:'recordProgress', tested: recordTested, best: recordBest });
+      setTimeout(recordLoop, 0);
+    }
+
     let trie = null;
     let wordsByLen = {};
 
@@ -779,6 +865,18 @@ function startEngine(dictionary, wordsByLen) {
       } else if (e.data.type === 'fewwordsResume') {
         fewWordsRunning = true;
         fewWordsLoop();
+      } else if (e.data.type === 'record') {
+        recordDiceMode = e.data.diceMode === 'free' ? 'free' : 'game';
+        recordScoreMode = e.data.scoreMode === 'points' ? 'points' : 'words';
+        recordBest = null;
+        recordTested = 0;
+        recordRunning = true;
+        recordLoop();
+      } else if (e.data.type === 'recordPause') {
+        recordRunning = false;
+      } else if (e.data.type === 'recordResume') {
+        recordRunning = true;
+        recordLoop();
       }
     };
   `;
@@ -797,6 +895,11 @@ function startEngine(dictionary, wordsByLen) {
   const btnFewWords = document.getElementById('btnFewWords');
   const fewWordsStatusEl = document.getElementById('fewWordsStatus');
   const fewWordsFeedEl = document.getElementById('fewWordsFeed');
+  const btnRecord = document.getElementById('btnRecord');
+  const recordStatusEl = document.getElementById('recordStatus');
+  const recordFeedEl = document.getElementById('recordFeed');
+  const recordDiceRadios = [...document.querySelectorAll('input[name="recordDice"]')];
+  const recordScoreRadios = [...document.querySelectorAll('input[name="recordScore"]')];
 
   const availableLens = Object.keys(wordsByLen).map(Number).filter(l => wordsByLen[l].length > 0).sort((a,b)=>a-b);
   availableLens.forEach(l => {
@@ -828,6 +931,14 @@ function startEngine(dictionary, wordsByLen) {
   let fewWordsTested = 0;
   let fewWordsFound = 0;
 
+  let recordActive = false;
+  let recordRunning = false;
+  let recordTested = 0;
+  let recordCount = 0;
+  let recordBest = null;
+  let recordCurrentDiceMode = 'game';
+  let recordCurrentScoreMode = 'words';
+
   worker.onmessage = (e) => {
     if (e.data.type === 'ready') {
       reconStatusEl.textContent = 'Prêt — choisissez une longueur et lancez la recherche.';
@@ -840,6 +951,8 @@ function startEngine(dictionary, wordsByLen) {
       vowelsStatusEl.textContent = 'Prêt à chercher.';
       btnFewWords.disabled = false;
       fewWordsStatusEl.textContent = 'Prêt à chercher.';
+      btnRecord.disabled = false;
+      recordStatusEl.textContent = 'Prêt à chercher.';
     } else if (e.data.type === 'reconGrid') {
       reconCount++;
       addCard(e.data, 'recon');
@@ -872,6 +985,15 @@ function startEngine(dictionary, wordsByLen) {
     } else if (e.data.type === 'fewWordsProgress') {
       fewWordsTested = e.data.tested;
       updateFewWordsStatus();
+    } else if (e.data.type === 'recordGrid') {
+      recordCount++;
+      recordBest = e.data.value;
+      addCard(e.data, 'record');
+      updateRecordStatus();
+    } else if (e.data.type === 'recordProgress') {
+      recordTested = e.data.tested;
+      if (e.data.best !== null && e.data.best !== undefined) recordBest = e.data.best;
+      updateRecordStatus();
     }
   };
 
@@ -894,6 +1016,14 @@ function startEngine(dictionary, wordsByLen) {
   function updateFewWordsStatus() {
     const txt = `<strong>${fewWordsFound}</strong> grille${fewWordsFound>1?'s':''} affichée${fewWordsFound>1?'s':''} · ${fewWordsTested.toLocaleString('fr-FR')} testée${fewWordsTested>1?'s':''}`;
     fewWordsStatusEl.innerHTML = txt;
+  }
+
+  function updateRecordStatus() {
+    const diceTxt = recordCurrentDiceMode === 'free' ? 'dés libres' : 'dés du jeu';
+    const scoreTxt = recordCurrentScoreMode === 'points' ? 'points' : 'mots';
+    const bestTxt = recordBest === null ? '—' : recordBest.toLocaleString('fr-FR');
+    const txt = `<strong>${recordCount}</strong> record${recordCount>1?'s':''} affiché${recordCount>1?'s':''} (${diceTxt} · ${scoreTxt}) · meilleur : <strong>${bestTxt}</strong> · ${recordTested.toLocaleString('fr-FR')} grille${recordTested>1?'s':''} testée${recordTested>1?'s':''}`;
+    recordStatusEl.innerHTML = txt;
   }
 
   function resetVowelsSearch() {
@@ -934,6 +1064,51 @@ function startEngine(dictionary, wordsByLen) {
       btnFewWords.textContent = fewWordsRunning ? 'Pause' : 'Reprendre';
     }
   });
+
+  function resetRecordSearch() {
+    recordActive = false;
+    recordRunning = false;
+    recordTested = 0;
+    recordCount = 0;
+    recordBest = null;
+    recordDiceRadios.forEach(r => r.disabled = false);
+    recordScoreRadios.forEach(r => r.disabled = false);
+    btnRecord.textContent = 'Lancer';
+    recordStatusEl.textContent = 'Prêt à chercher.';
+  }
+
+  btnRecord.addEventListener('click', () => {
+    if (!recordActive) {
+      recordCurrentDiceMode = recordDiceRadios.find(r => r.checked).value;
+      recordCurrentScoreMode = recordScoreRadios.find(r => r.checked).value;
+      recordActive = true;
+      recordRunning = true;
+      recordCount = 0;
+      recordTested = 0;
+      recordBest = null;
+      recordDiceRadios.forEach(r => r.disabled = true);
+      recordScoreRadios.forEach(r => r.disabled = true);
+      worker.postMessage({ type: 'record', diceMode: recordCurrentDiceMode, scoreMode: recordCurrentScoreMode });
+      btnRecord.textContent = 'Pause';
+    } else {
+      recordRunning = !recordRunning;
+      worker.postMessage({ type: recordRunning ? 'recordResume' : 'recordPause' });
+      btnRecord.textContent = recordRunning ? 'Pause' : 'Reprendre';
+    }
+  });
+
+  recordDiceRadios.forEach(r => r.addEventListener('change', () => {
+    if (recordActive) {
+      if (recordRunning) worker.postMessage({ type: 'recordPause' });
+      resetRecordSearch();
+    }
+  }));
+  recordScoreRadios.forEach(r => r.addEventListener('change', () => {
+    if (recordActive) {
+      if (recordRunning) worker.postMessage({ type: 'recordPause' });
+      resetRecordSearch();
+    }
+  }));
 
   function resetSearch() {
     reconActive = false;
@@ -1036,7 +1211,7 @@ function startEngine(dictionary, wordsByLen) {
 
   function addCard(data, kind) {
     const card = document.createElement('div');
-    card.className = 'card' + (kind === 'recon' ? ' recon' : '') + (kind === 'digits' ? ' digits' : '') + (kind === 'vowels' ? ' vowels' : '') + (kind === 'fewwords' ? ' fewwords' : '');
+    card.className = 'card' + (kind === 'recon' ? ' recon' : '') + (kind === 'digits' ? ' digits' : '') + (kind === 'vowels' ? ' vowels' : '') + (kind === 'fewwords' ? ' fewwords' : '') + (kind === 'record' ? ' record' : '');
 
     const head = document.createElement('div');
     head.className = 'card-head';
@@ -1045,6 +1220,10 @@ function startEngine(dictionary, wordsByLen) {
     if (kind === 'digits') badge.textContent = `${data.digitCount} chiffre${data.digitCount>1?'s':''} sur 10`;
     else if (kind === 'vowels') badge.textContent = '8 voyelles / 8 consonnes';
     else if (kind === 'fewwords') badge.textContent = '5 mots — ≥4 voyelles / ≥5 consonnes différentes';
+    else if (kind === 'record') {
+      const scoreTxt = data.scoreMode === 'points' ? 'points' : 'mots';
+      badge.textContent = `Nouveau record — ${data.value} ${scoreTxt}`;
+    }
     else badge.textContent = `Rétroconstruction — mot de ${data.targetLen} lettres`;
     head.appendChild(badge);
     const sub = document.createElement('div');
@@ -1055,6 +1234,9 @@ function startEngine(dictionary, wordsByLen) {
     } else if (kind === 'recon') {
       const capTxt = (data.maxWords === undefined || data.maxWords === Infinity) ? 'illimité' : `≤ ${data.maxWords}`;
       sub.textContent = `${data.total} mots trouvables (${capTxt}) · plus long mot : ${data.maxLen} lettres`;
+    } else if (kind === 'record') {
+      const diceTxt = data.diceMode === 'free' ? 'dés libres' : 'dés du jeu';
+      sub.textContent = `${diceTxt} · ${data.total} mots trouvables · plus long mot : ${data.maxLen} lettres`;
     } else {
       sub.textContent = `${data.total} mots trouvables · plus long mot : ${data.maxLen} lettres`;
     }
@@ -1149,7 +1331,7 @@ function startEngine(dictionary, wordsByLen) {
     }
 
     let wordsListEl = null;
-    if ((kind === 'recon' || kind === 'digits' || kind === 'vowels' || kind === 'fewwords') && data.words && data.words.length) {
+    if ((kind === 'recon' || kind === 'digits' || kind === 'vowels' || kind === 'fewwords' || kind === 'record') && data.words && data.words.length) {
       gridWrap.classList.add('clickable');
       wordsListEl = document.createElement('div');
       wordsListEl.className = 'word-list';
@@ -1208,6 +1390,8 @@ function startEngine(dictionary, wordsByLen) {
       else digitsFeedEl.appendChild(card);
     } else if (kind === 'fewwords') {
       fewWordsFeedEl.appendChild(card);
+    } else if (kind === 'record') {
+      recordFeedEl.appendChild(card);
     } else {
       feedEl.appendChild(card);
     }
