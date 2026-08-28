@@ -621,11 +621,13 @@ function startEngine(dictionary, wordsByLen) {
         const board = recordDiceMode === 'free' ? randomAnyLetterBoard() : randomBoard();
         recordTested++;
         const { words } = analyzeBoardCapped(board, trie, Infinity);
-        const value = scoreWords(words, recordScoreMode);
+        const pointsTotal = scoreWords(words, 'points');
+        const wordsTotal = words.length;
+        const value = recordScoreMode === 'points' ? pointsTotal : wordsTotal;
         if (recordBest === null || value > recordBest) {
           recordBest = value;
           const { counts, maxLen } = lengthCounts(words);
-          self.postMessage({ type:'recordGrid', board, counts, total: words.length, maxLen, words, value, diceMode: recordDiceMode, scoreMode: recordScoreMode });
+          self.postMessage({ type:'recordGrid', board, counts, total: wordsTotal, pointsTotal, maxLen, words, value, diceMode: recordDiceMode, scoreMode: recordScoreMode });
         }
       }
       self.postMessage({ type:'recordProgress', tested: recordTested, best: recordBest });
@@ -1236,7 +1238,7 @@ function startEngine(dictionary, wordsByLen) {
       sub.textContent = `${data.total} mots trouvables (${capTxt}) · plus long mot : ${data.maxLen} lettres`;
     } else if (kind === 'record') {
       const diceTxt = data.diceMode === 'free' ? 'dés libres' : 'dés du jeu';
-      sub.textContent = `${diceTxt} · ${data.total} mots trouvables · plus long mot : ${data.maxLen} lettres`;
+      sub.textContent = `${diceTxt} · ${data.total} mots · ${data.pointsTotal} points`;
     } else {
       sub.textContent = `${data.total} mots trouvables · plus long mot : ${data.maxLen} lettres`;
     }
