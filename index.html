@@ -286,6 +286,12 @@
         <label><input type="radio" name="recordScore" value="words" checked> De mots</label>
         <label><input type="radio" name="recordScore" value="points"> De points</label>
       </fieldset>
+      <fieldset id="recordWordsFieldset">
+        <legend>Mots</legend>
+        <label><input type="radio" name="recordWordsMode" value="total" checked> Total</label>
+        <label><input type="radio" name="recordWordsMode" value="length"> De longueur</label>
+        <select id="recordLenSelect" disabled></select>
+      </fieldset>
     </div>
     <button id="btnRecord" class="record-btn" disabled>Lancer</button>
   </div>
@@ -607,12 +613,19 @@ function startEngine(dictionary, wordsByLen) {
       }
       return words.length;
     }
+    function countWordsOfLength(words, len) {
+      let c = 0;
+      for (const w of words) if (w.length === len) c++;
+      return c;
+    }
 
     let recordRunning = false;
     let recordTested = 0;
     let recordBest = null;
     let recordDiceMode = 'game';
     let recordScoreMode = 'words';
+    let recordWordsMode = 'total';
+    let recordWordLen = null;
 
     function recordLoop() {
       if (!recordRunning) return;
@@ -623,11 +636,15 @@ function startEngine(dictionary, wordsByLen) {
         const { words } = analyzeBoardCapped(board, trie, Infinity);
         const pointsTotal = scoreWords(words, 'points');
         const wordsTotal = words.length;
-        const value = recordScoreMode === 'points' ? pointsTotal : wordsTotal;
+        const lengthCount = recordWordsMode === 'length' ? countWordsOfLength(words, recordWordLen) : null;
+        let value;
+        if (recordScoreMode === 'points') value = pointsTotal;
+        else if (recordWordsMode === 'length') value = lengthCount;
+        else value = wordsTotal;
         if (recordBest === null || value > recordBest) {
           recordBest = value;
           const { counts, maxLen } = lengthCounts(words);
-          self.postMessage({ type:'recordGrid', board, counts, total: wordsTotal, pointsTotal, maxLen, words, value, diceMode: recordDiceMode, scoreMode: recordScoreMode });
+          self.postMessage({ type:'recordGrid', board, counts, total: wordsTotal, pointsTotal, lengthCount, maxLen, words, value, diceMode: recordDiceMode, scoreMode: recordScoreMode, wordsMode: recordWordsMode, wordLen: recordWordLen });
         }
       }
       self.postMessage({ type:'recordProgress', tested: recordTested, best: recordBest });
@@ -870,6 +887,8 @@ function startEngine(dictionary, wordsByLen) {
       } else if (e.data.type === 'record') {
         recordDiceMode = e.data.diceMode === 'free' ? 'free' : 'game';
         recordScoreMode = e.data.scoreMode === 'points' ? 'points' : 'words';
+        recordWordsMode = e.data.wordsMode === 'length' ? 'length' : 'total';
+        recordWordLen = e.data.wordLen || null;
         recordBest = null;
         recordTested = 0;
         recordRunning = true;
@@ -902,6 +921,9 @@ function startEngine(dictionary, wordsByLen) {
   const recordFeedEl = document.getElementById('recordFeed');
   const recordDiceRadios = [...document.querySelectorAll('input[name="recordDice"]')];
   const recordScoreRadios = [...document.querySelectorAll('input[name="recordScore"]')];
+  const recordWordsFieldset = document.getElementById('recordWordsFieldset');
+  const recordWordsModeRadios = [...document.querySelectorAll('input[name="recordWordsMode"]')];
+  const recordLenSelect = document.getElementById('recordLenSelect');
 
   const availableLens = Object.keys(wordsByLen).map(Number).filter(l => wordsByLen[l].length > 0).sort((a,b)=>a-b);
   availableLens.forEach(l => {
@@ -911,6 +933,14 @@ function startEngine(dictionary, wordsByLen) {
     lenSelect.appendChild(opt);
   });
   if (availableLens.length) lenSelect.value = availableLens[Math.floor(availableLens.length/2)];
+
+  availableLens.forEach(l => {
+    const opt = document.createElement('option');
+    opt.value = l;
+    opt.textContent = `${l} lettres`;
+    recordLenSelect.appendChild(opt);
+  });
+  if (availableLens.length) recordLenSelect.value = availableLens[Math.floor(availableLens.length/2)];
 
   let reconCount = 0;
   let reconTested = 0;
@@ -940,6 +970,8 @@ function startEngine(dictionary, wordsByLen) {
   let recordBest = null;
   let recordCurrentDiceMode = 'game';
   let recordCurrentScoreMode = 'words';
+  let recordCurrentWordsMode = 'total';
+  let recordCurrentWordLen = null;
 
   worker.onmessage = (e) => {
     if (e.data.type === 'ready') {
@@ -1022,7 +1054,10 @@ function startEngine(dictionary, wordsByLen) {
 
   function updateRecordStatus() {
     const diceTxt = recordCurrentDiceMode === 'free' ? 'dés libres' : 'dés du jeu';
-    const scoreTxt = recordCurrentScoreMode === 'points' ? 'points' : 'mots';
+    let scoreTxt;
+    if (recordCurrentScoreMode === 'points') scoreTxt = 'points';
+    else if (recordCurrentWordsMode === 'length') scoreTxt = `mots de ${recordCurrentWordLen} lettres`;
+    else scoreTxt = 'mots';
     const bestTxt = recordBest === null ? '—' : recordBest.toLocaleString('fr-FR');
     const txt = `<strong>${recordCount}</strong> record${recordCount>1?'s':''} affiché${recordCount>1?'s':''} (${diceTxt} · ${scoreTxt}) · meilleur : <strong>${bestTxt}</strong> · ${recordTested.toLocaleString('fr-FR')} grille${recordTested>1?'s':''} testée${recordTested>1?'s':''}`;
     recordStatusEl.innerHTML = txt;
@@ -1067,6 +1102,13 @@ function startEngine(dictionary, wordsByLen) {
     }
   });
 
+  function updateRecordWordsUI() {
+    const scoreMode = recordScoreRadios.find(r => r.checked).value;
+    recordWordsFieldset.style.display = scoreMode === 'points' ? 'none' : '';
+    const wordsMode = recordWordsModeRadios.find(r => r.checked).value;
+    recordLenSelect.disabled = recordActive || wordsMode !== 'length';
+  }
+
   function resetRecordSearch() {
     recordActive = false;
     recordRunning = false;
@@ -1075,6 +1117,8 @@ function startEngine(dictionary, wordsByLen) {
     recordBest = null;
     recordDiceRadios.forEach(r => r.disabled = false);
     recordScoreRadios.forEach(r => r.disabled = false);
+    recordWordsModeRadios.forEach(r => r.disabled = false);
+    updateRecordWordsUI();
     btnRecord.textContent = 'Lancer';
     recordStatusEl.textContent = 'Prêt à chercher.';
   }
@@ -1083,6 +1127,8 @@ function startEngine(dictionary, wordsByLen) {
     if (!recordActive) {
       recordCurrentDiceMode = recordDiceRadios.find(r => r.checked).value;
       recordCurrentScoreMode = recordScoreRadios.find(r => r.checked).value;
+      recordCurrentWordsMode = recordWordsModeRadios.find(r => r.checked).value;
+      recordCurrentWordLen = Number(recordLenSelect.value);
       recordActive = true;
       recordRunning = true;
       recordCount = 0;
@@ -1090,7 +1136,9 @@ function startEngine(dictionary, wordsByLen) {
       recordBest = null;
       recordDiceRadios.forEach(r => r.disabled = true);
       recordScoreRadios.forEach(r => r.disabled = true);
-      worker.postMessage({ type: 'record', diceMode: recordCurrentDiceMode, scoreMode: recordCurrentScoreMode });
+      recordWordsModeRadios.forEach(r => r.disabled = true);
+      recordLenSelect.disabled = true;
+      worker.postMessage({ type: 'record', diceMode: recordCurrentDiceMode, scoreMode: recordCurrentScoreMode, wordsMode: recordCurrentWordsMode, wordLen: recordCurrentWordLen });
       btnRecord.textContent = 'Pause';
     } else {
       recordRunning = !recordRunning;
@@ -1109,8 +1157,25 @@ function startEngine(dictionary, wordsByLen) {
     if (recordActive) {
       if (recordRunning) worker.postMessage({ type: 'recordPause' });
       resetRecordSearch();
+    } else {
+      updateRecordWordsUI();
     }
   }));
+  recordWordsModeRadios.forEach(r => r.addEventListener('change', () => {
+    if (recordActive) {
+      if (recordRunning) worker.postMessage({ type: 'recordPause' });
+      resetRecordSearch();
+    } else {
+      updateRecordWordsUI();
+    }
+  }));
+  recordLenSelect.addEventListener('change', () => {
+    if (recordActive) {
+      if (recordRunning) worker.postMessage({ type: 'recordPause' });
+      resetRecordSearch();
+    }
+  });
+  updateRecordWordsUI();
 
   function resetSearch() {
     reconActive = false;
@@ -1223,8 +1288,13 @@ function startEngine(dictionary, wordsByLen) {
     else if (kind === 'vowels') badge.textContent = '8 voyelles / 8 consonnes';
     else if (kind === 'fewwords') badge.textContent = '5 mots — ≥4 voyelles / ≥5 consonnes différentes';
     else if (kind === 'record') {
-      const scoreTxt = data.scoreMode === 'points' ? 'points' : 'mots';
-      badge.textContent = `Nouveau record — ${data.value} ${scoreTxt}`;
+      if (data.scoreMode === 'points') {
+        badge.textContent = `Nouveau record — ${data.value} points`;
+      } else if (data.wordsMode === 'length') {
+        badge.textContent = `Nouveau record — ${data.value} mot${data.value>1?'s':''} de ${data.wordLen} lettres`;
+      } else {
+        badge.textContent = `Nouveau record — ${data.value} mots`;
+      }
     }
     else badge.textContent = `Rétroconstruction — mot de ${data.targetLen} lettres`;
     head.appendChild(badge);
@@ -1238,7 +1308,11 @@ function startEngine(dictionary, wordsByLen) {
       sub.textContent = `${data.total} mots trouvables (${capTxt}) · plus long mot : ${data.maxLen} lettres`;
     } else if (kind === 'record') {
       const diceTxt = data.diceMode === 'free' ? 'dés libres' : 'dés du jeu';
-      sub.textContent = `${diceTxt} · ${data.total} mots · ${data.pointsTotal} points`;
+      const parts = [diceTxt];
+      if (data.wordsMode === 'length') parts.push(`${data.lengthCount} mot${data.lengthCount>1?'s':''} de ${data.wordLen} lettres`);
+      parts.push(`${data.total} mots au total`);
+      parts.push(`${data.pointsTotal} points`);
+      sub.textContent = parts.join(' · ');
     } else {
       sub.textContent = `${data.total} mots trouvables · plus long mot : ${data.maxLen} lettres`;
     }
