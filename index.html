@@ -77,6 +77,33 @@
   button:hover { background: rgba(200,169,110,0.1); }
   button:disabled { opacity: 0.4; cursor: default; }
 
+  #persoSection {
+    max-width: 720px; margin: 0 auto; padding: 26px 16px 8px; text-align: center;
+    border-bottom: 1.5px solid var(--border); margin-bottom: 10px;
+  }
+  .perso-title {
+    font-family: 'Playfair Display', serif; font-size: 1.3rem; letter-spacing: 0.05em;
+    color: var(--gold-light); text-transform: uppercase; margin-bottom: 4px;
+  }
+  .perso-note {
+    font-size: 0.66rem; color: var(--text-dim); max-width: 440px; margin: 0 auto 16px;
+    line-height: 1.5;
+  }
+  .perso-grid {
+    width: 266px; margin: 0 auto;
+  }
+  .tile.perso-input {
+    background: var(--tile-bg); border: 1.5px solid var(--tile-border); border-radius: 8px;
+    font-family: 'Playfair Display', serif; font-size: 1.6rem; font-weight: 700;
+    color: var(--cream); text-align: center; text-transform: uppercase;
+    outline: none; padding: 0;
+  }
+  .tile.perso-input:focus { border-color: var(--gold); box-shadow: 0 0 0 1px var(--gold); }
+  .tile.perso-input.filled { border-color: var(--gold); color: var(--gold-light); }
+  #btnPersoClear { margin-top: 16px; }
+  #persoResult { margin-top: 22px; }
+  #persoResult:empty { display: none; }
+
   #feed {
     max-width: 720px; margin: 0 auto;
     display: flex; flex-direction: column; gap: 20px;
@@ -299,6 +326,14 @@
   <div class="bar-wrap"><div id="progressBar"></div></div>
   <div id="errorMsg"></div>
 </div>
+
+<section id="persoSection">
+  <h2 class="perso-title">Grille perso</h2>
+  <p class="perso-note">Tapez les 16 lettres, de gauche à droite puis de haut en bas — l'analyse démarre automatiquement dès la 16ᵉ lettre.</p>
+  <div class="grid perso-grid" id="persoGrid"></div>
+  <button id="btnPersoClear" type="button">Effacer</button>
+  <div id="persoResult"></div>
+</section>
 
 <header>
   <h1>Grilles par longueur de mot</h1>
@@ -965,6 +1000,12 @@ function startEngine(dictionary, wordsByLen) {
         trie = buildTrie(e.data.words);
         wordsByLen = e.data.wordsByLen || {};
         self.postMessage({ type:'ready' });
+      } else if (e.data.type === 'customBoard') {
+        const board = e.data.board;
+        const { words } = analyzeBoardCapped(board, trie, Infinity);
+        const { counts, maxLen } = lengthCounts(words);
+        const pointsTotal = scoreWords(words, 'points');
+        self.postMessage({ type:'customBoardResult', board, words, counts, maxLen, total: words.length, pointsTotal });
       } else if (e.data.type === 'reconstruct') {
         reconTargetLen = e.data.targetLen;
         reconMaxWords = (e.data.maxWords === -1 || e.data.maxWords == null || isNaN(e.data.maxWords)) ? Infinity : e.data.maxWords;
@@ -1037,6 +1078,10 @@ function startEngine(dictionary, wordsByLen) {
     };
   `;
   const worker = new Worker(URL.createObjectURL(new Blob([workerCode], {type:'application/javascript'})));
+
+  const persoGridEl = document.getElementById('persoGrid');
+  const btnPersoClear = document.getElementById('btnPersoClear');
+  const persoResultEl = document.getElementById('persoResult');
 
   const feedEl = document.getElementById('feed');
   const digitsFeedEl = document.getElementById('digitsFeed');
@@ -1138,6 +1183,7 @@ function startEngine(dictionary, wordsByLen) {
       recordStatusEl.textContent = 'Prêt à chercher.';
       btnStats.disabled = false;
       statsStatusEl.textContent = 'Prêt à lancer.';
+      persoTiles.forEach(t => t.disabled = false);
     } else if (e.data.type === 'reconGrid') {
       reconCount++;
       addCard(e.data, 'recon');
@@ -1189,6 +1235,8 @@ function startEngine(dictionary, wordsByLen) {
         renderHistChart(pointsChartEl, e.data.pointsHist, STATS_POINT_BIN_MAIN, e.data.tested);
         renderLengthChart(lengthChartEl, e.data.lengthCounts, e.data.totalWords);
       }
+    } else if (e.data.type === 'customBoardResult') {
+      addCard(e.data, 'perso');
     }
   };
 
@@ -1425,6 +1473,62 @@ function startEngine(dictionary, wordsByLen) {
     }
   });
 
+  // ── Grille perso : saisie des 16 lettres et analyse automatique ──
+  const persoTiles = [];
+  for (let i = 0; i < 16; i++) {
+    const inp = document.createElement('input');
+    inp.type = 'text';
+    inp.maxLength = 1;
+    inp.autocomplete = 'off';
+    inp.autocapitalize = 'characters';
+    inp.spellcheck = false;
+    inp.className = 'tile perso-input';
+    inp.dataset.index = i;
+    inp.disabled = true;
+    persoGridEl.appendChild(inp);
+    persoTiles.push(inp);
+  }
+
+  function persoIsComplete() {
+    return persoTiles.every(t => /^[A-Z]$/.test(t.value));
+  }
+
+  function triggerPersoAnalysis() {
+    if (!persoIsComplete()) return;
+    const board = persoTiles.map(t => t.value);
+    worker.postMessage({ type: 'customBoard', board });
+  }
+
+  persoTiles.forEach((inp, i) => {
+    inp.addEventListener('input', () => {
+      const v = inp.value.toUpperCase().replace(/[^A-Z]/g, '').slice(0, 1);
+      inp.value = v;
+      inp.classList.toggle('filled', !!v);
+      if (v && i < 15) {
+        persoTiles[i+1].focus();
+        persoTiles[i+1].select();
+      }
+      triggerPersoAnalysis();
+    });
+    inp.addEventListener('keydown', (e) => {
+      if (e.key === 'Backspace' && !inp.value && i > 0) {
+        persoTiles[i-1].focus();
+        persoTiles[i-1].select();
+      } else if (e.key === 'ArrowLeft' && i > 0) {
+        persoTiles[i-1].focus();
+      } else if (e.key === 'ArrowRight' && i < 15) {
+        persoTiles[i+1].focus();
+      }
+    });
+    inp.addEventListener('focus', () => inp.select());
+  });
+
+  btnPersoClear.addEventListener('click', () => {
+    persoTiles.forEach(t => { t.value = ''; t.classList.remove('filled'); });
+    persoResultEl.innerHTML = '';
+    if (!persoTiles[0].disabled) persoTiles[0].focus();
+  });
+
   function resetSearch() {
     reconActive = false;
     reconRunning = false;
@@ -1544,6 +1648,7 @@ function startEngine(dictionary, wordsByLen) {
         badge.textContent = `Nouveau record — ${data.value} mots`;
       }
     }
+    else if (kind === 'perso') badge.textContent = 'Grille perso';
     else badge.textContent = `Rétroconstruction — mot de ${data.targetLen} lettres`;
     head.appendChild(badge);
     const sub = document.createElement('div');
@@ -1561,6 +1666,8 @@ function startEngine(dictionary, wordsByLen) {
       parts.push(`${data.total} mots au total`);
       parts.push(`${data.pointsTotal} points`);
       sub.textContent = parts.join(' · ');
+    } else if (kind === 'perso') {
+      sub.textContent = `${data.total} mots trouvables · ${data.pointsTotal} points · plus long mot : ${data.maxLen} lettres`;
     } else {
       sub.textContent = `${data.total} mots trouvables · plus long mot : ${data.maxLen} lettres`;
     }
@@ -1655,7 +1762,7 @@ function startEngine(dictionary, wordsByLen) {
     }
 
     let wordsListEl = null;
-    if ((kind === 'recon' || kind === 'digits' || kind === 'vowels' || kind === 'fewwords' || kind === 'record') && data.words && data.words.length) {
+    if ((kind === 'recon' || kind === 'digits' || kind === 'vowels' || kind === 'fewwords' || kind === 'record' || kind === 'perso') && data.words && data.words.length) {
       gridWrap.classList.add('clickable');
       wordsListEl = document.createElement('div');
       wordsListEl.className = 'word-list';
@@ -1716,6 +1823,9 @@ function startEngine(dictionary, wordsByLen) {
       fewWordsFeedEl.appendChild(card);
     } else if (kind === 'record') {
       recordFeedEl.appendChild(card);
+    } else if (kind === 'perso') {
+      persoResultEl.innerHTML = '';
+      persoResultEl.appendChild(card);
     } else {
       feedEl.appendChild(card);
     }
