@@ -12,7 +12,7 @@
     --bg:#0d0d0f; --surface:#16161a; --surface2:#1e1e24;
     --border:#2a2a35; --gold:#c8a96e; --gold-light:#e8c98e;
     --cream:#f0e8d8; --text:#d8d0c8; --text-dim:#8a8578;
-    --tile-bg:#1a1a22; --tile-border:#30304a; --recon:#7a9ec4; --digits:#8ec49a; --vowels:#d4a56a; --fewwords:#b57ac4; --record:#c46a7a; --stats:#6ac4b8;
+    --tile-bg:#1a1a22; --tile-border:#30304a; --recon:#7a9ec4; --digits:#8ec49a; --vowels:#d4a56a; --fewwords:#b57ac4; --record:#c46a7a; --stats:#6ac4b8; --stats2:#e0955a;
   }
   * { margin:0; padding:0; box-sizing:border-box; }
   body {
@@ -257,6 +257,11 @@
     writing-mode: vertical-rl; transform: rotate(180deg);
     height: 70px; margin-top: 4px; overflow: hidden;
   }
+  .stats-bar.alt {
+    background: var(--stats2); box-shadow: 0 0 6px rgba(224,149,90,0.5);
+  }
+  .stats-bar-value.alt { color: var(--stats2); }
+  .stats-chart-title.alt { color: var(--stats2); }
 
   table.len-table {
     border-collapse: collapse; font-size: 0.72rem; width: 100%; max-width: 380px;
@@ -365,6 +370,11 @@
     <h3 class="stats-chart-title">Répartition des mots par longueur</h3>
     <p class="stats-chart-note">Pourcentage des mots trouvés (toutes grilles confondues) selon leur longueur</p>
     <div id="lengthChart" class="stats-chart"><div class="stats-chart-empty">Lancez la recherche pour voir la distribution.</div></div>
+  </div>
+  <div class="stats-chart-block">
+    <h3 class="stats-chart-title alt">Répartition du dictionnaire par longueur (ODS.txt)</h3>
+    <p class="stats-chart-note">Pour info — pourcentage de mots de chaque longueur dans le dictionnaire complet (indépendant des grilles testées)</p>
+    <div id="dictLengthChart" class="stats-chart"></div>
   </div>
 </div>
 
@@ -1054,6 +1064,7 @@ function startEngine(dictionary, wordsByLen) {
   const wordCountChartEl = document.getElementById('wordCountChart');
   const pointsChartEl = document.getElementById('pointsChart');
   const lengthChartEl = document.getElementById('lengthChart');
+  const dictLengthChartEl = document.getElementById('dictLengthChart');
 
   const availableLens = Object.keys(wordsByLen).map(Number).filter(l => wordsByLen[l].length > 0).sort((a,b)=>a-b);
   availableLens.forEach(l => {
@@ -1183,7 +1194,7 @@ function startEngine(dictionary, wordsByLen) {
 
   const STATS_PLOT_HEIGHT = 100; // px — must match .stats-bar-track CSS height
 
-  function renderBars(containerEl, bars) {
+  function renderBars(containerEl, bars, altColor) {
     if (!bars.length) {
       containerEl.innerHTML = '<div class="stats-chart-empty">Aucune donnée pour le moment.</div>';
       return;
@@ -1195,12 +1206,12 @@ function startEngine(dictionary, wordsByLen) {
       const wrap = document.createElement('div');
       wrap.className = 'stats-bar-wrap';
       const val = document.createElement('div');
-      val.className = 'stats-bar-value';
+      val.className = 'stats-bar-value' + (altColor ? ' alt' : '');
       val.textContent = b.text;
       const track = document.createElement('div');
       track.className = 'stats-bar-track';
       const bar = document.createElement('div');
-      bar.className = 'stats-bar';
+      bar.className = 'stats-bar' + (altColor ? ' alt' : '');
       bar.style.height = heightPx + 'px';
       track.appendChild(bar);
       const label = document.createElement('div');
@@ -1235,6 +1246,20 @@ function startEngine(dictionary, wordsByLen) {
     });
     renderBars(containerEl, bars);
   }
+
+  function renderDictLengthChart() {
+    const totalDictWords = availableLens.reduce((sum, l) => sum + wordsByLen[l].length, 0);
+    if (!totalDictWords) {
+      dictLengthChartEl.innerHTML = '<div class="stats-chart-empty">Aucune donnée.</div>';
+      return;
+    }
+    const bars = availableLens.map(l => {
+      const pct = (wordsByLen[l].length / totalDictWords) * 100;
+      return { value: pct, text: pct.toFixed(2) + '%', label: `${l}` };
+    });
+    renderBars(dictLengthChartEl, bars, true);
+  }
+  renderDictLengthChart();
 
   function updateReconStatus() {
     const capTxt = reconCurrentMaxWords === Infinity ? 'illimité' : `≤ ${reconCurrentMaxWords} mots`;
