@@ -240,8 +240,9 @@
     min-width: 22px; flex-shrink: 0;
   }
   .stats-bar-value {
-    font-size: 0.58rem; color: var(--stats); white-space: nowrap;
-    height: 13px; line-height: 13px; margin-bottom: 2px;
+    font-size: 0.58rem; color: var(--stats); white-space: nowrap; line-height: 1;
+    writing-mode: vertical-rl; transform: rotate(180deg);
+    height: 70px; margin-bottom: 4px; overflow: hidden;
   }
   .stats-bar-track {
     height: 100px; /* must match STATS_PLOT_HEIGHT in JS */
@@ -252,10 +253,9 @@
     box-shadow: 0 0 6px rgba(106,196,184,0.5);
   }
   .stats-bar-label {
-    font-size: 0.56rem; color: var(--text-dim); white-space: nowrap;
+    font-size: 0.56rem; color: var(--text-dim); white-space: nowrap; line-height: 1;
     writing-mode: vertical-rl; transform: rotate(180deg);
-    height: 34px; margin-top: 4px; overflow: hidden;
-    display: flex; align-items: flex-start; justify-content: center;
+    height: 70px; margin-top: 4px; overflow: hidden;
   }
 
   table.len-table {
@@ -353,7 +353,7 @@
 <div id="statsCharts">
   <div class="stats-chart-block">
     <h3 class="stats-chart-title">Distribution du nombre de mots</h3>
-    <p class="stats-chart-note">Pourcentage des grilles ayant trouvé X mots (par tranche de 5)</p>
+    <p class="stats-chart-note">Pourcentage des grilles ayant trouvé X mots (par tranche de 10)</p>
     <div id="wordCountChart" class="stats-chart"><div class="stats-chart-empty">Lancez la recherche pour voir la distribution.</div></div>
   </div>
   <div class="stats-chart-block">
@@ -724,7 +724,7 @@ function startEngine(dictionary, wordsByLen) {
     // ── Mode "Distribution statistique" ─────────────────────────
     // Toujours avec les dés du jeu (randomBoard). Aucune grille n'est
     // envoyée au thread principal : seules les statistiques cumulées le sont.
-    const STATS_WORD_BIN = 5;   // largeur des tranches pour l'histogramme "nombre de mots"
+    const STATS_WORD_BIN = 10;  // largeur des tranches pour l'histogramme "nombre de mots"
     const STATS_POINT_BIN = 10; // largeur des tranches pour l'histogramme "nombre de points"
 
     let statsRunning = false;
@@ -1108,7 +1108,7 @@ function startEngine(dictionary, wordsByLen) {
   let statsTested = 0;
   let statsLastRenderAt = 0;
   const STATS_RENDER_THROTTLE_MS = 200;
-  const STATS_WORD_BIN_MAIN = 5;
+  const STATS_WORD_BIN_MAIN = 10;
   const STATS_POINT_BIN_MAIN = 10;
 
   worker.onmessage = (e) => {
@@ -1205,9 +1205,7 @@ function startEngine(dictionary, wordsByLen) {
       track.appendChild(bar);
       const label = document.createElement('div');
       label.className = 'stats-bar-label';
-      const labelSpan = document.createElement('span');
-      labelSpan.textContent = b.label;
-      label.appendChild(labelSpan);
+      label.textContent = b.label;
       wrap.appendChild(val);
       wrap.appendChild(track);
       wrap.appendChild(label);
@@ -1220,7 +1218,7 @@ function startEngine(dictionary, wordsByLen) {
     const bars = bins.map(b => {
       const count = hist[b];
       const pct = total > 0 ? (count / total) * 100 : 0;
-      return { value: count, text: pct.toFixed(1) + '%', label: `${b}-${b + binSize - 1}` };
+      return { value: count, text: pct.toFixed(2) + '%', label: `${b}-${b + binSize - 1}` };
     });
     renderBars(containerEl, bars);
   }
@@ -1233,7 +1231,7 @@ function startEngine(dictionary, wordsByLen) {
     }
     const bars = lens.map(l => {
       const pct = (lengthCounts[l] / totalWords) * 100;
-      return { value: pct, text: pct.toFixed(1) + '%', label: `${l}` };
+      return { value: pct, text: pct.toFixed(2) + '%', label: `${l}` };
     });
     renderBars(containerEl, bars);
   }
