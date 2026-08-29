@@ -12,7 +12,7 @@
     --bg:#0d0d0f; --surface:#16161a; --surface2:#1e1e24;
     --border:#2a2a35; --gold:#c8a96e; --gold-light:#e8c98e;
     --cream:#f0e8d8; --text:#d8d0c8; --text-dim:#8a8578;
-    --tile-bg:#1a1a22; --tile-border:#30304a; --recon:#7a9ec4; --digits:#8ec49a; --vowels:#d4a56a; --fewwords:#b57ac4; --record:#c46a7a;
+    --tile-bg:#1a1a22; --tile-border:#30304a; --recon:#7a9ec4; --digits:#8ec49a; --vowels:#d4a56a; --fewwords:#b57ac4; --record:#c46a7a; --stats:#6ac4b8;
   }
   * { margin:0; padding:0; box-sizing:border-box; }
   body {
@@ -72,6 +72,8 @@
   button.fewwords-btn:hover { background: rgba(181,122,196,0.1); }
   button.record-btn { border-color: var(--record); color: var(--record); }
   button.record-btn:hover { background: rgba(196,106,122,0.1); }
+  button.stats-btn { border-color: var(--stats); color: var(--stats); }
+  button.stats-btn:hover { background: rgba(106,196,184,0.1); }
   button:hover { background: rgba(200,169,110,0.1); }
   button:disabled { opacity: 0.4; cursor: default; }
 
@@ -211,6 +213,41 @@
   .record-options input[type="radio"]:disabled { cursor: default; }
   .record-options fieldset:has(input:disabled) { opacity: 0.5; }
 
+  #statsCharts {
+    max-width: 720px; margin: 22px auto 0; padding: 0 16px;
+  }
+  .stats-chart-block { margin-bottom: 30px; }
+  .stats-chart-title {
+    font-size: 0.78rem; letter-spacing: 0.08em; text-transform: uppercase; color: var(--stats);
+    margin: 0 0 4px; font-weight: 600;
+  }
+  .stats-chart-note {
+    font-size: 0.68rem; color: var(--text-dim); margin: 0 0 10px;
+  }
+  .stats-chart {
+    display: flex; align-items: flex-end; gap: 3px; height: 140px;
+    overflow-x: auto; overflow-y: hidden; padding: 8px 4px 0;
+    border-bottom: 1.5px solid var(--tile-border);
+  }
+  .stats-chart-empty {
+    font-size: 0.72rem; color: var(--text-dim); padding: 20px 0;
+  }
+  .stats-bar-wrap {
+    display: flex; flex-direction: column; align-items: center; justify-content: flex-end;
+    min-width: 22px; height: 100%; flex-shrink: 0;
+  }
+  .stats-bar-value {
+    font-size: 0.58rem; color: var(--stats); margin-bottom: 2px; white-space: nowrap;
+  }
+  .stats-bar {
+    width: 16px; min-height: 1px; background: var(--stats); border-radius: 3px 3px 0 0;
+    box-shadow: 0 0 6px rgba(106,196,184,0.5);
+  }
+  .stats-bar-label {
+    font-size: 0.56rem; color: var(--text-dim); margin-top: 4px;
+    writing-mode: vertical-rl; transform: rotate(180deg); white-space: nowrap;
+  }
+
   table.len-table {
     border-collapse: collapse; font-size: 0.72rem; width: 100%; max-width: 380px;
   }
@@ -296,7 +333,30 @@
     <button id="btnRecord" class="record-btn" disabled>Lancer</button>
   </div>
   <div id="recordStatus"></div>
+
+  <div id="statsControls" style="margin-top:18px;">
+    <button id="btnStats" class="stats-btn" disabled>Distribution statistique (dés du jeu)</button>
+  </div>
+  <div id="statsStatus"></div>
 </header>
+
+<div id="statsCharts">
+  <div class="stats-chart-block">
+    <h3 class="stats-chart-title">Distribution du nombre de mots</h3>
+    <p class="stats-chart-note">Nombre de grilles ayant trouvé X mots (par tranche de 5)</p>
+    <div id="wordCountChart" class="stats-chart"><div class="stats-chart-empty">Lancez la recherche pour voir la distribution.</div></div>
+  </div>
+  <div class="stats-chart-block">
+    <h3 class="stats-chart-title">Distribution du nombre de points</h3>
+    <p class="stats-chart-note">Nombre de grilles ayant obtenu X points (par tranche de 10)</p>
+    <div id="pointsChart" class="stats-chart"><div class="stats-chart-empty">Lancez la recherche pour voir la distribution.</div></div>
+  </div>
+  <div class="stats-chart-block">
+    <h3 class="stats-chart-title">Répartition des mots par longueur</h3>
+    <p class="stats-chart-note">Pourcentage des mots trouvés (toutes grilles confondues) selon leur longueur</p>
+    <div id="lengthChart" class="stats-chart"><div class="stats-chart-empty">Lancez la recherche pour voir la distribution.</div></div>
+  </div>
+</div>
 
 <div id="feed"></div>
 <div id="digitsFeed"></div>
@@ -651,6 +711,48 @@ function startEngine(dictionary, wordsByLen) {
       setTimeout(recordLoop, 0);
     }
 
+    // ── Mode "Distribution statistique" ─────────────────────────
+    // Toujours avec les dés du jeu (randomBoard). Aucune grille n'est
+    // envoyée au thread principal : seules les statistiques cumulées le sont.
+    const STATS_WORD_BIN = 5;   // largeur des tranches pour l'histogramme "nombre de mots"
+    const STATS_POINT_BIN = 10; // largeur des tranches pour l'histogramme "nombre de points"
+
+    let statsRunning = false;
+    let statsTested = 0;
+    let statsWordCountHist = {};
+    let statsPointsHist = {};
+    let statsLengthCounts = {};
+    let statsTotalWords = 0;
+
+    function statsLoop() {
+      if (!statsRunning) return;
+      const BATCH = 40;
+      for (let k = 0; k < BATCH; k++) {
+        const board = randomBoard();
+        statsTested++;
+        const { words } = analyzeBoardCapped(board, trie, Infinity);
+        const wordCount = words.length;
+        const points = scoreWords(words, 'points');
+        const wBin = Math.floor(wordCount / STATS_WORD_BIN) * STATS_WORD_BIN;
+        const pBin = Math.floor(points / STATS_POINT_BIN) * STATS_POINT_BIN;
+        statsWordCountHist[wBin] = (statsWordCountHist[wBin] || 0) + 1;
+        statsPointsHist[pBin] = (statsPointsHist[pBin] || 0) + 1;
+        for (const w of words) {
+          statsLengthCounts[w.length] = (statsLengthCounts[w.length] || 0) + 1;
+        }
+        statsTotalWords += wordCount;
+      }
+      self.postMessage({
+        type: 'statsUpdate',
+        tested: statsTested,
+        wordCountHist: statsWordCountHist,
+        pointsHist: statsPointsHist,
+        lengthCounts: statsLengthCounts,
+        totalWords: statsTotalWords
+      });
+      setTimeout(statsLoop, 0);
+    }
+
     let trie = null;
     let wordsByLen = {};
 
@@ -898,6 +1000,19 @@ function startEngine(dictionary, wordsByLen) {
       } else if (e.data.type === 'recordResume') {
         recordRunning = true;
         recordLoop();
+      } else if (e.data.type === 'stats') {
+        statsTested = 0;
+        statsWordCountHist = {};
+        statsPointsHist = {};
+        statsLengthCounts = {};
+        statsTotalWords = 0;
+        statsRunning = true;
+        statsLoop();
+      } else if (e.data.type === 'statsPause') {
+        statsRunning = false;
+      } else if (e.data.type === 'statsResume') {
+        statsRunning = true;
+        statsLoop();
       }
     };
   `;
@@ -924,6 +1039,11 @@ function startEngine(dictionary, wordsByLen) {
   const recordWordsFieldset = document.getElementById('recordWordsFieldset');
   const recordWordsModeRadios = [...document.querySelectorAll('input[name="recordWordsMode"]')];
   const recordLenSelect = document.getElementById('recordLenSelect');
+  const btnStats = document.getElementById('btnStats');
+  const statsStatusEl = document.getElementById('statsStatus');
+  const wordCountChartEl = document.getElementById('wordCountChart');
+  const pointsChartEl = document.getElementById('pointsChart');
+  const lengthChartEl = document.getElementById('lengthChart');
 
   const availableLens = Object.keys(wordsByLen).map(Number).filter(l => wordsByLen[l].length > 0).sort((a,b)=>a-b);
   availableLens.forEach(l => {
@@ -973,6 +1093,14 @@ function startEngine(dictionary, wordsByLen) {
   let recordCurrentWordsMode = 'total';
   let recordCurrentWordLen = null;
 
+  let statsActive = false;
+  let statsRunning = false;
+  let statsTested = 0;
+  let statsLastRenderAt = 0;
+  const STATS_RENDER_THROTTLE_MS = 200;
+  const STATS_WORD_BIN_MAIN = 5;
+  const STATS_POINT_BIN_MAIN = 10;
+
   worker.onmessage = (e) => {
     if (e.data.type === 'ready') {
       reconStatusEl.textContent = 'Prêt — choisissez une longueur et lancez la recherche.';
@@ -987,6 +1115,8 @@ function startEngine(dictionary, wordsByLen) {
       fewWordsStatusEl.textContent = 'Prêt à chercher.';
       btnRecord.disabled = false;
       recordStatusEl.textContent = 'Prêt à chercher.';
+      btnStats.disabled = false;
+      statsStatusEl.textContent = 'Prêt à lancer.';
     } else if (e.data.type === 'reconGrid') {
       reconCount++;
       addCard(e.data, 'recon');
@@ -1028,8 +1158,77 @@ function startEngine(dictionary, wordsByLen) {
       recordTested = e.data.tested;
       if (e.data.best !== null && e.data.best !== undefined) recordBest = e.data.best;
       updateRecordStatus();
+    } else if (e.data.type === 'statsUpdate') {
+      statsTested = e.data.tested;
+      statsStatusEl.textContent = `${statsTested.toLocaleString('fr-FR')} grille${statsTested>1?'s':''} testée${statsTested>1?'s':''} (dés du jeu)`;
+      const now = performance.now();
+      if (now - statsLastRenderAt >= STATS_RENDER_THROTTLE_MS) {
+        statsLastRenderAt = now;
+        renderHistChart(wordCountChartEl, e.data.wordCountHist, STATS_WORD_BIN_MAIN);
+        renderHistChart(pointsChartEl, e.data.pointsHist, STATS_POINT_BIN_MAIN);
+        renderLengthChart(lengthChartEl, e.data.lengthCounts, e.data.totalWords);
+      }
     }
   };
+
+  function renderHistChart(containerEl, hist, binSize) {
+    const bins = Object.keys(hist).map(Number).sort((a,b) => a-b);
+    if (!bins.length) {
+      containerEl.innerHTML = '<div class="stats-chart-empty">Aucune donnée pour le moment.</div>';
+      return;
+    }
+    const maxCount = Math.max(...bins.map(b => hist[b]));
+    containerEl.innerHTML = '';
+    bins.forEach(b => {
+      const count = hist[b];
+      const heightPct = maxCount > 0 ? Math.max((count / maxCount) * 100, 2) : 2;
+      const wrap = document.createElement('div');
+      wrap.className = 'stats-bar-wrap';
+      const val = document.createElement('div');
+      val.className = 'stats-bar-value';
+      val.textContent = count.toLocaleString('fr-FR');
+      const bar = document.createElement('div');
+      bar.className = 'stats-bar';
+      bar.style.height = heightPct + '%';
+      const label = document.createElement('div');
+      label.className = 'stats-bar-label';
+      label.textContent = `${b}-${b + binSize - 1}`;
+      wrap.appendChild(val);
+      wrap.appendChild(bar);
+      wrap.appendChild(label);
+      containerEl.appendChild(wrap);
+    });
+  }
+
+  function renderLengthChart(containerEl, lengthCounts, totalWords) {
+    const lens = Object.keys(lengthCounts).map(Number).sort((a,b) => a-b);
+    if (!lens.length || !totalWords) {
+      containerEl.innerHTML = '<div class="stats-chart-empty">Aucune donnée pour le moment.</div>';
+      return;
+    }
+    const pcts = lens.map(l => (lengthCounts[l] / totalWords) * 100);
+    const maxPct = Math.max(...pcts);
+    containerEl.innerHTML = '';
+    lens.forEach((l, i) => {
+      const pct = pcts[i];
+      const heightPct = maxPct > 0 ? Math.max((pct / maxPct) * 100, 2) : 2;
+      const wrap = document.createElement('div');
+      wrap.className = 'stats-bar-wrap';
+      const val = document.createElement('div');
+      val.className = 'stats-bar-value';
+      val.textContent = pct.toFixed(1) + '%';
+      const bar = document.createElement('div');
+      bar.className = 'stats-bar';
+      bar.style.height = heightPct + '%';
+      const label = document.createElement('div');
+      label.className = 'stats-bar-label';
+      label.textContent = `${l}`;
+      wrap.appendChild(val);
+      wrap.appendChild(bar);
+      wrap.appendChild(label);
+      containerEl.appendChild(wrap);
+    });
+  }
 
   function updateReconStatus() {
     const capTxt = reconCurrentMaxWords === Infinity ? 'illimité' : `≤ ${reconCurrentMaxWords} mots`;
@@ -1176,6 +1375,24 @@ function startEngine(dictionary, wordsByLen) {
     }
   });
   updateRecordWordsUI();
+
+  btnStats.addEventListener('click', () => {
+    if (!statsActive) {
+      statsActive = true;
+      statsRunning = true;
+      statsTested = 0;
+      statsLastRenderAt = 0;
+      wordCountChartEl.innerHTML = '<div class="stats-chart-empty">Aucune donnée pour le moment.</div>';
+      pointsChartEl.innerHTML = '<div class="stats-chart-empty">Aucune donnée pour le moment.</div>';
+      lengthChartEl.innerHTML = '<div class="stats-chart-empty">Aucune donnée pour le moment.</div>';
+      worker.postMessage({ type: 'stats' });
+      btnStats.textContent = 'Pause';
+    } else {
+      statsRunning = !statsRunning;
+      worker.postMessage({ type: statsRunning ? 'statsResume' : 'statsPause' });
+      btnStats.textContent = statsRunning ? 'Pause' : 'Reprendre';
+    }
+  });
 
   function resetSearch() {
     reconActive = false;
